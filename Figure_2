@@ -1,0 +1,709 @@
+#Fig2 Cell proportions
+###########################################
+library(gplots)
+load("data/metadata.Rda")
+colnames(phe)
+table(phe$orig.ident)
+test=phe[,c("orig.ident" ,"time", "therapy","Phase","celltype")] 
+test$cell=factor(test$celltype,levels=rev(tb$Celltype))
+head(test)
+tb=as.data.frame(table(phe$celltype),stringsAsFactors = F)
+tb=tb[order(tb$Freq,decreasing=F),]
+tb
+
+pal <- paletteer_d("ggsci::nrc_npg")[c(1,2,6)]  
+pal
+pal2 <- c("#FA7F6F","#8ECFC9","#82B0D2")
+pal2
+table(test$celltype)
+test$celltype <- factor(test$celltype, levels=c("Fibro_C1","Endothelial","Fibro_C2","Capillary",
+                                                "Pericytes","Myofibro","Lipofibro",
+                                                "AT2", "AT1","Goblet","Clara", 
+                                                "Acti_B","Memo_B", "NK","Naive_CD4T","Naive_CD8T","Acti_CD8T", "Tregs","Prol_CD8T","Th17","Naive_B", "Th2",
+                                                "TRAM_C1", "MoAM", "Neutrophil","AMs","TRAM_C2","pDC","cDC","Prol_DC"
+                                              ), ordered=TRUE)
+test
+p.bar.time = ggplot(test, aes(x=celltype, fill=time)) +   
+  geom_bar(position="dodge") + scale_fill_manual(values=pal2) +
+  labs(title='Cell proportion of each sample') +theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 0.5, vjust = 0.5,size=10,))
+p.bar.time  
+###########################
+table(test$orig.ident)
+table(test$celltype)
+table(test$time)
+table(test$therapy)
+cellpro_bytime <- as.data.frame(table(test$celltype))
+colnames(cellpro_bytime) <- c("celltype","count")
+cellpro_bytime$percentage <-tb$Freq / sum(tb$Freq)
+factor(test$celltype)
+
+library(tidyverse)
+order1 <- test %>% filter(therapy == "Control")  
+order2 <- table(order1$celltype) %>% as.data.frame() 
+#order3 <- arrange(order2,desc(Freq))
+order4 <- arrange(order2,Freq)
+
+ordered_increase <- order4$Var1
+ordered_increase
+test$celltype <- factor(test$celltype, levels=ordered_increase, ordered=TRUE)
+test$celltype
+fre.day0 <- subset(test,time == 'Day0')
+fday0 <- as.data.frame(table(fre.day0$celltype))
+fday0$fd0 <- fday0$Freq / 9288
+fday0 <- fday0[,-2]
+
+fre.day07 <- subset(test,time == 'Day07')
+fday07 <- as.data.frame(table(fre.day07$celltype))
+fday07$fd7 <- fday07$Freq / 38382
+fday07 <- fday07[,-2]
+
+fre.day30 <- subset(test,time == 'Day30')
+fday30 <- as.data.frame(table(fre.day30$celltype))
+fday30$fd30 <- fday30$Freq / 46383
+fday30 <- fday30[,-2]
+
+cellfre_bytime <- merge(fday0,fday07,by = "Var1")
+cellfre_bytime <- merge(cellfre_bytime,fday30,by = "Var1")
+colnames(cellfre_bytime)[1] <- "celltype"
+cellfre_bytime
+write.csv(cellfre_bytime,file = "output/cellfre_bytime.csv")
+cellfre_bytime_d7vd0 <- cellfre_bytime[,-4]
+cellfre_bytime_d30vd0 <- cellfre_bytime[,-3]
+cellfre_bytime_d30vd7 <- cellfre_bytime[,-2]
+
+fre.ctrl <- subset(test,therapy == 'Control')
+f.ctrl <- as.data.frame(table(fre.ctrl$celltype))
+f.ctrl$fctrl <- f.ctrl$Freq / 9288
+f.ctrl <- f.ctrl[,-2]
+
+fre.ICI <- subset(test,therapy == 'ICI')
+f.ICI <- as.data.frame(table(fre.ICI$celltype))
+f.ICI$fICI <- f.ICI$Freq / 28716
+f.ICI <- f.ICI[,-2]
+
+fre.IR <- subset(test,therapy == 'IR')
+f.IR <- as.data.frame(table(fre.IR$celltype))
+f.IR$fIR <- f.IR$Freq / 26206
+f.IR <- f.IR[,-2]
+
+fre.iRT <- subset(test,therapy == 'iRT')
+f.iRT <- as.data.frame(table(fre.iRT$celltype))
+f.iRT$fiRT <- f.iRT$Freq / 29843
+f.iRT <- f.iRT[,-2]
+
+cellfre_bytherapy<- merge(f.ctrl,f.ICI,by = "Var1")
+cellfre_bytherapy<- merge(cellfre_bytherapy,f.IR,by = "Var1")
+cellfre_bytherapy<- merge(cellfre_bytherapy,f.iRT,by = "Var1")
+colnames(cellfre_bytherapy) <- c("celltype","Control","ICI","IR","iRT")
+cellfre_bytherapy
+write.csv(cellfre_bytherapy,file = "output/cellfre_bytherapy.csv")
+cellfre_bytherapy_ICIvCtrl <- cellfre_bytherapy[,-c(4,5)]
+cellfre_bytherapy_IRvCtrl <- cellfre_bytherapy[,-c(3,5)]
+cellfre_bytherapy_iRTvCtrl <- cellfre_bytherapy[,-c(3,4)]
+cellfre_bytherapy_ICIvIR <- cellfre_bytherapy[,-c(2,5)]
+cellfre_bytherapy_ICIviRT <- cellfre_bytherapy[,-c(2,4)]
+cellfre_bytherapy_RTviRT <- cellfre_bytherapy[,-c(2,3)]
+
+
+##Day0 vs Day7
+library(ggplot2)
+library(tidyverse)
+head(cellfre_bytime_d7vd0)
+data<-cellfre_bytime_d7vd0
+table<-gather(data,key=Sample,value=Per,-celltype)
+table$Cell<-round(table$Per * 100,2)
+table$celltype<-factor(table$celltype)
+table[which(table$Sample == 'fd0'), c('Per', 'Cell')] <- table[which(table$Sample == 'fd0'), c('Per', 'Cell')]*-1
+
+pal <- c("#FA7F6F","#8ECFC9")
+p<-ggplot(table,aes(celltype,Cell,fill=Sample))+geom_col()+coord_flip()+scale_y_continuous(breaks = seq(-10, 10, 5),
+              labels = as.character(abs(seq(-10, 10, 5))), limits = c(-10, 10))+ 
+  scale_fill_manual(values=pal)+ geom_text(aes(label= abs(Cell)),hjust = "outward",check_overlap = F)+ 
+  theme(panel.grid = element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'),
+  legend.title = element_blank(),axis.text = element_text(color="black",size=12),
+  axis.title = element_text(color = "black",size=15)) +geom_hline(yintercept = 0, size = 0.4) + 
+  annotate('text',label = 'Day7', 30, 9,color ="#8ECFC9",size = 6)+
+  annotate('text',label = 'Day0', 30, -9,color ="#FA7F6F",size = 6)  
+p
+ggsave(p,file="output/allcell_day0v7_transbarplot.pdf",width=10, height=10)
+
+##Day0 vs Day30
+
+library(ggplot2)
+library(tidyverse)
+head(cellfre_bytime_d30vd0)
+data<-cellfre_bytime_d30vd0
+table<-gather(data,key=Sample,value=Per,-celltype)
+table$Cell<-round(table$Per * 100,2)
+table$celltype<-factor(table$celltype)
+table[which(table$Sample == 'fd0'), c('Per', 'Cell')] <- table[which(table$Sample == 'fd0'), c('Per', 'Cell')]*-1
+
+p<-ggplot(table,aes(celltype,Cell,fill=Sample))+geom_col()+coord_flip()+scale_y_continuous(breaks = seq(-10, 13, 5),
+                                                                                           labels = as.character(abs(seq(-10, 13, 5))), limits = c(-10, 13))+ 
+  scale_fill_manual(values=pal)+ geom_text(aes(label= abs(Cell)),hjust = "outward",check_overlap = F)+ 
+  theme(panel.grid = element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'),
+        legend.title = element_blank(),axis.text = element_text(color="black",size=12),
+        axis.title = element_text(color = "black",size=15)) +geom_hline(yintercept = 0, size = 0.4) + 
+  annotate('text',label = 'Day30', 30, 9,color ="#8ECFC9",size = 6)+
+  annotate('text',label = 'Day0', 30, -9,color ="#FA7F6F",size = 6) 
+p
+ggsave(p,file="output/allcell_day0v30_transbarplot.pdf",width=10, height=10)
+
+##Day7 vs Day30
+
+library(ggplot2)
+library(tidyverse)
+head(cellfre_bytime_d30vd7)
+data<-cellfre_bytime_d30vd7
+table<-gather(data,key=Sample,value=Per,-celltype)
+table$Cell<-round(table$Per * 100,2)
+table$celltype<-factor(table$celltype)
+table[which(table$Sample == 'fd7'), c('Per', 'Cell')] <- table[which(table$Sample == 'fd7'), c('Per', 'Cell')]*-1
+
+p<-ggplot(table,aes(celltype,Cell,fill=Sample))+geom_col()+coord_flip()+scale_y_continuous(breaks = seq(-10, 13, 5),
+                                                                                           labels = as.character(abs(seq(-10, 13, 5))), limits = c(-10, 13))+ 
+  scale_fill_manual(values=pal)+ geom_text(aes(label= abs(Cell)),hjust = "outward",check_overlap = F)+ 
+  theme(panel.grid = element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'),
+        legend.title = element_blank(),axis.text = element_text(color="black",size=12),
+        axis.title = element_text(color = "black",size=15)) +geom_hline(yintercept = 0, size = 0.4) + 
+  annotate('text',label = 'Day30', 30, 9,color ="#FA7F6F",size = 6)+
+  annotate('text',label = 'Day7', 30, -9,color ="#8ECFC9",size = 6) 
+p
+ggsave(p,file="output/allcell_day7v30_transbarplot.pdf",width=10, height=10)
+
+##Control vs ICI
+library(ggplot2)
+library(tidyverse)
+head(cellfre_bytherapy_ICIvCtrl)
+data<-cellfre_bytherapy_ICIvCtrl
+table<-gather(data,key=Sample,value=Per,-celltype)
+table$Cell<-round(table$Per * 100,2)
+table$celltype<-factor(table$celltype)
+table[which(table$Sample == 'Control'), c('Per', 'Cell')] <- table[which(table$Sample == 'Control'), c('Per', 'Cell')]*-1
+pal
+p<-ggplot(table,aes(celltype,Cell,fill=Sample))+geom_col()+coord_flip()+scale_y_continuous(breaks = seq(-10, 13, 5),
+                                                                                           labels = as.character(abs(seq(-10, 13, 5))), limits = c(-10, 13))+ 
+  scale_fill_manual(values=pal)+ geom_text(aes(label= abs(Cell)),hjust = "outward",check_overlap = F)+ 
+  theme(panel.grid = element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'),
+        legend.title = element_blank(),axis.text = element_text(color="black",size=12),
+        axis.title = element_text(color = "black",size=15)) +geom_hline(yintercept = 0, size = 0.4) + 
+  annotate('text',label = 'ICI', 30, 9,color ="#8ECFC9",size = 6)+
+  annotate('text',label = 'Control', 30, -9,color ="#FA7F6F",size = 6) 
+p
+ggsave(p,file="output/allcell_CtrlvsICI_transbarplot2.pdf",width=10, height=10)
+##Control vs IR
+library(ggplot2)
+library(tidyverse)
+head(cellfre_bytherapy_IRvCtrl)
+data<-cellfre_bytherapy_IRvCtrl
+table<-gather(data,key=Sample,value=Per,-celltype)
+table$Cell<-round(table$Per * 100,2)
+table$celltype<-factor(table$celltype)
+table[which(table$Sample == 'Control'), c('Per', 'Cell')] <- table[which(table$Sample == 'Control'), c('Per', 'Cell')]*-1
+pal1 <- c("#8ECFC9","#FA7F6F")
+pal <- c("#FA7F6F","#8ECFC9")
+p<-ggplot(table,aes(celltype,Cell,fill=Sample))+geom_col()+coord_flip()+scale_y_continuous(breaks = seq(-10, 10, 5),
+                                                                                           labels = as.character(abs(seq(-10, 10, 5))), limits = c(-10, 11))+ 
+  scale_fill_manual(values=pal)+ geom_text(aes(label= abs(Cell)),hjust = "outward",check_overlap = F)+ 
+  theme(panel.grid = element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'),
+        legend.title = element_blank(),axis.text = element_text(color="black",size=12),
+        axis.title = element_text(color = "black",size=15)) +geom_hline(yintercept = 0, size = 0.4) + 
+  annotate('text',label = 'IR', 30, 9,color ="#8ECFC9",size = 6)+
+  annotate('text',label = 'Day0', 30, -9,color ="#FA7F6F",size = 6) 
+p
+ggsave(p,file="output/allcell_CtrlvsIR_transbarplot.pdf",width=10, height=10)
+##Control vs iRT
+library(ggplot2)
+library(tidyverse)
+head(cellfre_bytherapy_iRTvCtrl)
+data<-cellfre_bytherapy_iRTvCtrl
+table<-gather(data,key=Sample,value=Per,-celltype)
+table$Cell<-round(table$Per * 100,2)
+table$celltype<-factor(table$celltype)
+table[which(table$Sample == 'Control'), c('Per', 'Cell')] <- table[which(table$Sample == 'Control'), c('Per', 'Cell')]*-1
+p<-ggplot(table,aes(celltype,Cell,fill=Sample))+geom_col()+coord_flip()+scale_y_continuous(breaks = seq(-10, 10, 5),
+                                                                                           labels = as.character(abs(seq(-10, 10, 5))), limits = c(-10, 10))+ 
+  scale_fill_manual(values=pal)+ geom_text(aes(label= abs(Cell)),hjust = "outward",check_overlap = F)+ 
+  theme(panel.grid = element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'),
+        legend.title = element_blank(),axis.text = element_text(color="black",size=12),
+        axis.title = element_text(color = "black",size=15)) +geom_hline(yintercept = 0, size = 0.4) + 
+  annotate('text',label = 'iRT', 30, 9,color ="#8ECFC9",size = 6)+
+  annotate('text',label = 'Control', 30, -9,color ="#FA7F6F",size = 6) 
+p
+ggsave(p,file="output/allcell_CtrlvsiRT_transbarplot.pdf",width=10, height=10)
+##ICI vs IR
+library(ggplot2)
+library(tidyverse)
+head(cellfre_bytherapy_ICIvIR)
+data<-cellfre_bytherapy_ICIvIR
+table<-gather(data,key=Sample,value=Per,-celltype)
+table$Cell<-round(table$Per * 100,2)
+table$celltype<-factor(table$celltype)
+table[which(table$Sample == 'ICI'), c('Per', 'Cell')] <- table[which(table$Sample == 'ICI'), c('Per', 'Cell')]*-1
+p<-ggplot(table,aes(celltype,Cell,fill=Sample))+geom_col()+coord_flip()+scale_y_continuous(breaks = seq(-13, 10, 5),
+                                                                                           labels = as.character(abs(seq(-13, 10, 5))), limits = c(-12, 10))+ 
+  scale_fill_manual(values=pal)+ geom_text(aes(label= abs(Cell)),hjust = "outward",check_overlap = F)+ 
+  theme(panel.grid = element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'),
+        legend.title = element_blank(),axis.text = element_text(color="black",size=12),
+        axis.title = element_text(color = "black",size=15)) +geom_hline(yintercept = 0, size = 0.4) + 
+  annotate('text',label = 'IR', 30, 9,color ="#8ECFC9",size = 6)+
+  annotate('text',label = 'ICI', 30, -9,color ="#FA7F6F",size = 6) 
+p
+ggsave(p,file="output/allcell_ICIvsIR_transbarplot.pdf",width=10, height=10)
+##ICI vs iRT
+library(ggplot2)
+library(tidyverse)
+head(cellfre_bytherapy_ICIviRT)
+data<-cellfre_bytherapy_ICIviRT 
+table<-gather(data,key=Sample,value=Per,-celltype)
+table$Cell<-round(table$Per * 100,2)
+table$celltype<-factor(table$celltype)
+table[which(table$Sample == 'ICI'), c('Per', 'Cell')] <- table[which(table$Sample == 'ICI'), c('Per', 'Cell')]*-1
+p<-ggplot(table,aes(celltype,Cell,fill=Sample))+geom_col()+coord_flip()+scale_y_continuous(breaks = seq(-13, 10, 5),
+                                                                                           labels = as.character(abs(seq(-13, 10, 5))), limits = c(-12, 10))+ 
+  scale_fill_manual(values=pal)+ geom_text(aes(label= abs(Cell)),hjust = "outward",check_overlap = F)+ 
+  theme(panel.grid = element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'),
+        legend.title = element_blank(),axis.text = element_text(color="black",size=12),
+        axis.title = element_text(color = "black",size=15)) +geom_hline(yintercept = 0, size = 0.4) + 
+  annotate('text',label = 'iRT', 30, 9,color ="#8ECFC9",size = 6)+
+  annotate('text',label = 'ICI', 30, -9,color ="#FA7F6F",size = 6) 
+p
+ggsave(p,file="output/allcell_ICIvsiRT_transbarplot.pdf",width=10, height=10)
+
+##RT vs iRT
+library(ggplot2)
+library(tidyverse)
+head(cellfre_bytherapy_RTviRT)
+data<-cellfre_bytherapy_RTviRT 
+table<-gather(data,key=Sample,value=Per,-celltype)
+table$Cell<-round(table$Per * 100,2)
+table$celltype<-factor(table$celltype)
+table[which(table$Sample == 'IR'), c('Per', 'Cell')] <- table[which(table$Sample == 'IR'), c('Per', 'Cell')]*-1
+p<-ggplot(table,aes(celltype,Cell,fill=Sample))+geom_col()+coord_flip()+scale_y_continuous(breaks = seq(-10, 10, 5),
+                                                                                           labels = as.character(abs(seq(-10, 10, 5))), limits = c(-10, 10))+ 
+  scale_fill_manual(values=pal)+ geom_text(aes(label= abs(Cell)),hjust = "outward",check_overlap = F)+ 
+  theme(panel.grid = element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'),
+        legend.title = element_blank(),axis.text = element_text(color="black",size=12),
+        axis.title = element_text(color = "black",size=15)) +geom_hline(yintercept = 0, size = 0.4) + 
+  annotate('text',label = 'iRT', 30, 9,color ="#8ECFC9",size = 6)+
+  annotate('text',label = 'IR', 30, -9,color ="#FA7F6F",size = 6) 
+p
+ggsave(p,file="output/allcell_IRvsiRT_transbarplot.pdf",width=10, height=10)
+
+#######################################################################################################
+colnames(cellfre_bytime) <- c("celltype","Day_0","Day_7","Day_30")
+head(cellfre_bytime)
+head(cellfre_bytherapy)
+data<-cellfre_bytime 
+table<-gather(data,key=Sample,value=Per,-celltype)
+table$Cell<-round(table$Per * 100,2)
+table$celltype<-factor(table$celltype)
+#pal <- paletteer_d("ggsci::nrc_npg")[c(6,5,2)] 
+pal <- c("#8ECFC9","#FA7F6F")
+library(ggplot2)
+p<- ggplot(table, aes(x= celltype, y=Cell,fill=Sample))+geom_bar(position = "dodge",stat = "identity")+  
+  scale_fill_manual(values=pal)+labs(title='Cell proportion of each sample') +theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 0.5, vjust = 0.5,size=10))+
+  theme(panel.grid = element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'),
+        legend.title = element_blank())
+p
+ggsave(p,file="output/allcell_multi-time-barplot.pdf",width=12, height=6)
+#######################################################################################################
+colnames(cellfre_bytime) <- c("celltype","Day_0","Day_7","Day_30")
+head(cellfre_bytime)
+head(cellfre_bytherapy)
+data<-cellfre_bytherapy 
+table<-gather(data,key=Sample,value=Per,-celltype)
+table$Cell<-round(table$Per * 100,2)
+table$celltype<-factor(table$celltype)
+pal <- c("#8ECFC9","#FA7F6F")
+library(ggplot2)
+p<- ggplot(table, aes(x= celltype, y=Cell,fill=Sample))+geom_bar(position = "dodge",stat = "identity")+ 
+  scale_fill_manual(values=pal)+labs(title='Cell proportion of each sample') +theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 0.5, vjust = 0.5,size=10))+
+  theme(panel.grid = element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'),
+        legend.title = element_blank())
+p
+ggsave(p,file="output/allcell_multi-therapy-barplot.pdf",width=12, height=6)
+
+############################################################
+#Cellchat analysis
+############################################################
+rm(list=ls())
+options(stringsAsFactors = FALSE)
+library(NMF)
+library(ComplexHeatmap)
+library(CellChat)
+library(tidyverse)
+library(ggalluvial)
+library(Seurat)
+library(svglite)
+library(ggplot2)
+library(patchwork)
+setwd("~/project/")
+load("data/RILI_sce.all.Rdata")
+scRNA <- sce.all.int
+scRNA <- UpdateSeuratObject(scRNA)
+data.input <- GetAssayData(scRNA, assay = "RNA", slot = "data")
+identity <- subset(scRNA@meta.data, select = "celltype")
+cellchat <- createCellChat(object = scRNA, group.by = "celltype", assay = "RNA")
+cellchat
+summary(cellchat)
+levels(cellchat@idents)
+cellchat <- addMeta(cellchat, meta = identity, meta.name = "labels")
+cellchat <- setIdent(cellchat, ident.use = "labels") 
+groupSize <- as.numeric(table(cellchat@idents)) 
+groupSize
+CellChatDB <- CellChatDB.mouse  
+CellChatDB.use <- subsetDB(CellChatDB, search = "Secreted Signaling") 
+cellchat@DB <- CellChatDB.use 
+#dev.new()  
+showDatabaseCategory(CellChatDB)
+cellchat <- subsetData(cellchat)
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+cellchat <- projectData(cellchat, PPI.mouse)
+cellchat <- computeCommunProb(cellchat)
+
+cellchat <- filterCommunication(cellchat,min.cells = 10)
+df.net <- subsetCommunication(cellchat)
+write.csv(df.net,"net_lr.csv")  
+cellchat <- computeCommunProbPathway(cellchat)
+df.netp <- subsetCommunication(cellchat, slot.name = "netP")
+write.csv(df.netp,"net_pathway.csv")  
+cellchat <- aggregateNet(cellchat)
+
+save(cellchat, file = "data/cellchat.Rdata")
+
+#Visulization of cell-cell Communication
+rm(list=ls())
+options(stringsAsFactors = FALSE)
+library(NMF)
+library(ComplexHeatmap)
+library(CellChat)
+library(tidyverse)
+library(ggalluvial)
+library(Seurat)
+setwd("~/project/")
+load("data/cellchat.Rdata")
+
+groupSize <- as.numeric(table(cellchat@idents))
+par(mfrow=c(1,2),xpd = TRUE)
+pdf(file = "output/Number of interactions.pdf",width = 20, height = 20)
+netVisual_circle(cellchat@net$count,vertex.weight = groupSize, weight.scale = T,
+                 label.edge = F, title.name = "Number of interactions")
+dev.off()
+pdf(file = "output/Interaction weights.pdf",width = 20, height = 20)
+netVisual_circle(cellchat@net$weight,vertex.weight = groupSize, weight.scale = T,
+                 label.edge = F, title.name = "Interaction weights/strength")
+dev.off()
+mat <- cellchat@net$count
+#par(mar=c(1,1,1,1))
+par(mfrow=c(5,6),xpd = TRUE)
+pdf(file = "output/Number of interactions-single.pdf",width = 36, height = 30)
+for(i in 1:nrow(mat)){
+  mat2 <- matrix(0,nrow = nrow(mat),ncol = ncol(mat),dimnames = dimnames(mat))
+  mat2[i,] <- mat[i,] 
+  netVisual_circle(mat2,vertex.weight = groupSize,weight.scale = T,arrow.width = 0.2,
+                   arrow.size = 0.1,edge.weight.max = max(mat),title.name = rownames(mat)[i])
+}
+dev.off()
+mat <- cellchat@net$weight
+par(mfrow=c(5,6),xpd = TRUE)
+pdf(file = "output/Weight of interactions-single.pdf",width = 36, height = 30)
+for(i in 1:nrow(mat)){
+  mat2 <- matrix(0,nrow = nrow(mat),ncol = ncol(mat),dimnames = dimnames(mat))
+  mat2[i,] <- mat[i,] 
+  netVisual_circle(mat2,vertex.weight = groupSize,weight.scale = T,arrow.width = 0.2,
+                   arrow.size = 0.1,edge.weight.max = max(mat),title.name = rownames(mat)[i])
+}
+dev.off()
+par("mar")
+par(mar=c(1,1,1,1))
+cellchat@netP$pathways
+pathways.show <- "MK" 
+levels(cellchat@idents) 
+vertex.receiver = c(1,2,3,5)
+par(mfrow=c(1,1))
+pdf(file = "output/TGFb_hierarchy.pdf",width = 8, height = 5)
+netVisual_aggregate(cellchat, signaling = pathways.show,vertex.receiver = vertex.receiver)
+                    
+dev.off()
+par(mfrow=c(1,1))
+pdf(file = "output/TGFb_circle.pdf",width = 8, height = 5)
+netVisual_aggregate(cellchat, signaling = pathways.show,layout = "circle")
+dev.off()
+par(mfrow=c(1,1))
+pdf(file = "output/TGFb_chord.pdf",width = 8, height = 5)
+netVisual_aggregate(cellchat, signaling = pathways.show,layout = "chord") 
+dev.off()
+par(mfrow=c(1,1))
+pdf(file = "output/TGFb_heatmap.pdf",width = 8, height = 5)
+netVisual_heatmap(cellchat, signaling = pathways.show,color.heatmap = "Reds") 
+dev.off()
+
+pdf(file = "output/TGFb_contribution.pdf",width = 8, height = 5)
+netAnalysis_contribution(cellchat, signaling = pathways.show)
+dev.off()
+
+pairLR.TGFb <- extractEnrichedLR(cellchat, signaling = pathways.show, geneLR.return = FALSE)
+write.csv(pairLR.TGFb,file = "output/pairLR_TGFb.csv")
+
+LR.show <- pairLR.TGFb[1,] # show one ligand-receptor pair
+vertex.receiver = c(1,2,3,4,5)
+
+netVisual_individual(cellchat, signaling = pathways.show,  pairLR.use = LR.show,
+                     vertex.receiver = vertex.receiver,layout = "hierarchy")
+netVisual_individual(cellchat, signaling = pathways.show,  pairLR.use = LR.show,
+                     layout = "circle")
+netVisual_individual(cellchat, signaling = pathways.show,  pairLR.use = LR.show,
+                     layout = "chord")  
+#netVisual_individual(cellchat, signaling = pathways.show,  pairLR.use = LR.show,
+vertex.receiver = vertex.receiver,layout = "hierarchy")
+
+library(ggplot2)
+pathway.show.all <- cellchat@netP$pathways
+levels(cellchat@idents)
+vertex.receiver = c(2,3,5)
+dir.create("all_pathways_com_circle")
+setwd("~/project/1_RILI/all_pathways_com_circle")
+for (i in 1:length(pathway.show.all)) {
+  netVisual_individual(cellchat, signaling = pathway.show.all[i], 
+                       vertex.receiver = vertex.receiver,layout = "circle")
+  gg <- netAnalysis_contribution(cellchat, signaling = pathway.show.all[i])
+  ggsave(filename = paste0(pathway.show.all[i],"_L-R_contribution.pdf"),
+         plot = gg,width = 10, height = 5,units = "in",dpi = 300)
+}
+dev.off()
+levels(cellchat@idents)
+p = netVisual_bubble(cellchat, sources.use = c(6),
+                     targets.use = c(1,2,3,4,5),remove.isolate = FALSE)
+ggsave("My_bubble_Fibro_only.pdf",p,width = 8,height = 12)
+levels(cellchat@idents)
+p = netVisual_bubble(cellchat, sources.use = c(6),targets.use = c(1,2,3,4,5),
+                     signaling = c("TGFb"), remove.isolate = FALSE)
+ggsave("My_bubble_TGFb_only.pdf",p,width = 8,height = 12)
+pairLR.use <- extractEnrichedLR(cellchat, signaling = "TGFb")
+p = netVisual_bubble(cellchat, sources.use = c(6),targets.use = c(1,2,3,4,5),
+                     pairLR.use = pairLR.use, remove.isolate = FALSE)
+ggsave("My_bubble_pairLR.use-TGFb.pdf",p,width = 8,height = 12)
+p = plotGeneExpression(cellchat, signaling = "TGFb")
+ggsave("vln-gene_expres-TGFb.pdf",p,width = 8,height = 12)
+p = plotGeneExpression(cellchat, signaling = "TGFb", type = "dot")
+ggsave("dot-gene_expres-TGFb.pdf",p,width = 8,height = 12)
+
+dev.off()
+cellchat <- netAnalysis_computeCentrality(cellchat, slot.name = "netP")
+pathways.show <- "TGFb" 
+netAnalysis_signalingRole_network(cellchat, signaling = pathways.show,
+                                  width = 15,height = 6,font.size = 10)
+
+gg1 <- netAnalysis_signalingRole_scatter(cellchat)
+gg2 <- netAnalysis_signalingRole_scatter(cellchat, signaling = c("TGFb", "CCL"))
+gg1 + gg2
+ht1 <- netAnalysis_signalingRole_heatmap(cellchat, pattern = "outgoing", font.size = 5)
+ht2 <- netAnalysis_signalingRole_heatmap(cellchat, pattern = "incoming", font.size = 5)
+ht1+ht2
+# Signaling role analysis on the cell-cell communication networks of interest
+ht <- netAnalysis_signalingRole_heatmap(cellchat, signaling = c("CXCL", "CCL"))
+
+library(NMF)
+library(ggalluvial)
+selectK(cellchat,pattern = "outgoing")
+nPatterns = 2
+pdf(file = "output/outgoing-heatmap2.pdf",width = 10, height = 5)
+cellchat <- identifyCommunicationPatterns(cellchat, pattern = "outgoing", 
+                                          k=nPatterns,width =5, height = 9, font.size = 6)
+dev.off()
+pdf(file = "output/outgoing-river.pdf",width = 10, height = 5)
+netAnalysis_river(cellchat, pattern = "outgoing")
+dev.off()
+pdf(file = "output/outgoing-dot.pdf",width = 10, height = 5)
+netAnalysis_dot(cellchat, pattern = "outgoing")
+dev.off()
+
+selectK(cellchat,pattern = "incoming")
+nPatterns = 2
+pdf(file = "output/incoming-heatmap2.pdf",width = 10, height = 5)
+cellchat <- identifyCommunicationPatterns(cellchat, pattern = "incoming", 
+                                          k=nPatterns,width =5, height = 9, font.size = 6)
+dev.off()
+pdf(file = "output/incoming-river.pdf",width = 10, height = 5)
+netAnalysis_river(cellchat, pattern = "incoming")
+dev.off()
+pdf(file = "output/incoming-dot.pdf",width = 10, height = 5)
+netAnalysis_dot(cellchat, pattern = "incoming")
+dev.off()
+
+
+library(Seurat)
+cellchat <- computeNetSimilarity(cellchat, type = "functional")
+cellchat <- netEmbedding(cellchat, type = "functional")
+cellchat <- netClustering(cellchat, type = "functional")
+# Visualization in 2D-space
+netVisual_embedding(cellchat, type = "functional", label.size = 3.5)
+netVisual_embeddingZoomIn(cellchat, type = "functional", nCol = 2)
+p <- netVisual_embedding(cellchat, type = "functional",label.size = 3.5)
+ggsave("output/Manifold_Functional_Clustering.pdf",p,width = 8,height = 6)
+
+cellchat <- computeNetSimilarity(cellchat, type = "structural")
+cellchat <- netEmbedding(cellchat, type = "structural")
+cellchat <- netClustering(cellchat, type = "structural")
+#> Classification learning of the signaling networks for a single dataset
+# Visualization in 2D-space 
+netVisual_embedding(cellchat, type = "structural", label.size = 3.5)
+netVisual_embeddingZoomIn(cellchat, type = "structural", nCol = 2)
+p <- netVisual_embedding(cellchat, type = "structural",label.size = 3.5)
+ggsave("Manifold_structural_Clustering.pdf",p,width = 8,height = 6)
+saveRDS(cellchat,"data/cellchat.rds")
+
+#5.differential cellchat analysis
+rm(list=ls())
+options(stringsAsFactors = FALSE)
+setwd("~/scRNA_wf/Cellchat_compare")
+cco.norm <-read_rds("data/cellchat_norm.rds")
+cco.bph <- read_rds("data/cellchat_14bph.rds")
+cco.list <- list(norm = cco.norm, bph = cco.bph)
+cellchat <- mergeCellChat(cco.list, add.names = names("cco.list"),cell.prefix = TRUE)
+save(cellchat, file = "data/cellchat_merge.Rda")
+
+###########################
+dev.off()
+gg1 <- compareInteractions(cellchat, show.legend = F, group = c(1,2),measure = "count")
+gg2 <- compareInteractions(cellchat, show.legend = F, group = c(1,2),measure = "weight")
+p <- gg1+ gg2
+ggsave("output/overview_num_weight.pdf",p,width = 6,height = 4)
+
+par(mfrow=c(1,2),xpd = TRUE)
+pdf(file = "output/Interaction number.pdf",width = 6, height = 5)
+netVisual_diffInteraction(cellchat, weight.scale =T,,measure = "count")
+dev.off()
+pdf(file = "output/Interaction weights.pdf",width = 6, height = 5)
+netVisual_diffInteraction(cellchat, weight.scale =T,measure = "weight")              
+dev.off()
+par(mfrow=c(1,1))
+h1 <- netVisual_heatmap(cellchat)
+h2 <- netVisual_heatmap(cellchat,measure = "weight")
+p <- h1+h2
+ggsave("output/heatmap_num_weight.pdf",p,width = 8,height = 6)
+
+par(mfrow=c(1,2))
+weight.max <- getMaxWeight(cco.list,attribute = c("idents","count"))
+for (i in 1:length(cco.list)) {
+  netVisual_circle(cco.list[[i]]@net$count,weight.scale = T,label.edge = F,
+                   edge.weight.max = weight.max[2],edge.width.max = 12,
+                   title.name = paste0("Number of interactions-",names(cco.list)[i]))
+}
+
+cco.list$norm@net$count
+
+#3.2 
+par(mfrow = c(1,2))
+s.cell <- c("Fibroblast", "Basal", "Luminal","Endothelial")
+count1 <- cco.list[[1]]@net$count[s.cell, s.cell]
+count2 <- cco.list[[2]]@net$count[s.cell, s.cell]
+weight.max <- max(max(count1), max(count2))
+pdf(file = "output/specificcells_num_interaction.pdf",width = 12, height = 6)
+netVisual_circle(count1, weight.scale = T, label.edge= T, edge.weight.max = weight.max, edge.width.max = 12, 
+                 title.name = paste0("Number of interactions-", names(cco.list)[1]))
+netVisual_circle(count2, weight.scale = T, label.edge= T, edge.weight.max = weight.max, edge.width.max = 12, 
+                 title.name = paste0("Number of interactions-", names(cco.list)[2]))
+dev.off()
+
+#3.3 
+## 
+gg1 <- rankNet(cellchat, mode = "comparison", stacked = T, do.stat = TRUE)
+gg2 <- rankNet(cellchat, mode = "comparison", stacked = F, do.stat = TRUE)
+p <- gg1 + gg2
+ggsave("output/Compare_pathway_strengh.pdf", p, width = 10, height = 6)
+
+#3.4 
+cellchat <- computeNetSimilarityPairwise(cellchat, type = "functional")
+cellchat <- netEmbedding(cellchat, type = "functional")
+cellchat <- netClustering(cellchat, type = "functional")
+#netVisual_embeddingPairwise(cellchat, type = "functional", label.size = 3.5)
+#netVisual_embeddingPairwiseZoomIn(cellchat, type = "functional", nCol = 2)
+cellchat <- computeNetSimilarityPairwise(cellchat, type = "structural")
+cellchat <- netEmbedding(cellchat, type = "structural")
+cellchat <- netClustering(cellchat, type = "structural")
+#netVisual_embeddingPairwise(cellchat, type = "structural", label.size = 3.5)
+#netVisual_embeddingPairwiseZoomIn(cellchat, type = "structural", nCol = 2)
+p <- rankSimilarity(cellchat, type = "structural") + ggtitle("Structural similarity of pathway")
+ggsave("Pathway_Similarity.pdf", p, width = 8, height = 5)
+saveRDS(cellchat, "cellchat.rds")
+
+#3.5 
+pathway.union <- union(cco.list[[1]]@netP$pathways, cco.list[[2]]@netP$pathways)
+ht1 = netAnalysis_signalingRole_heatmap(cco.list[[1]], pattern = "all", signaling = pathway.union, 
+                                        title = names(cco.list)[1], width = 8, height = 10)
+ht2 = netAnalysis_signalingRole_heatmap(cco.list[[2]], pattern = "all", signaling = pathway.union,
+                                        title = names(cco.list)[2], width = 8, height = 10)
+draw(ht1 + ht2, ht_gap = unit(0.5, "cm"))
+# save as Compare_signal_pattern_all.pdf  10*6
+
+pathway.union <- union(cco.list[[1]]@netP$pathways, cco.list[[2]]@netP$pathways)
+ht1 = netAnalysis_signalingRole_heatmap(cco.list[[1]], pattern = "outgoing", signaling = pathway.union, 
+                                        title = names(cco.list)[1], width = 8, height = 10)
+ht2 = netAnalysis_signalingRole_heatmap(cco.list[[2]], pattern = "outgoing", signaling = pathway.union,
+                                        title = names(cco.list)[2], width = 8, height = 10)
+draw(ht1 + ht2, ht_gap = unit(0.5, "cm"))
+# save as Compare_signal_pattern_outgoing.pdf  10*6
+
+pathway.union <- union(cco.list[[1]]@netP$pathways, cco.list[[2]]@netP$pathways)
+ht1 = netAnalysis_signalingRole_heatmap(cco.list[[1]], pattern = "incoming", signaling = pathway.union, 
+                                        title = names(cco.list)[1], width = 8, height = 10)
+ht2 = netAnalysis_signalingRole_heatmap(cco.list[[2]], pattern = "incoming", signaling = pathway.union,
+                                        title = names(cco.list)[2], width = 8, height = 10)
+draw(ht1 + ht2, ht_gap = unit(0.5, "cm"))
+# save as Compare_signal_pattern_incoming.pdf  10*6
+
+#3.6
+pathways.show <- c("TGFb") 
+weight.max <- getMaxWeight(cco.list, slot.name = c("netP"), attribute = pathways.show) 
+par(mfrow = c(1,2), xpd=TRUE)
+for (i in 1:length(cco.list)) {
+  netVisual_aggregate(cco.list[[i]], signaling = pathways.show, layout = "circle", 
+                      edge.weight.max = weight.max[1], edge.width.max = 10, 
+                      signaling.name = paste(pathways.show, names(cco.list)[i]))
+}
+# save as Compare_TGFb_net.pdf  10*6.5
+
+#
+par(mfrow = c(1,2), xpd=TRUE)
+ht <- list()
+for (i in 1:length(cco.list)) {
+  ht[[i]] <- netVisual_heatmap(cco.list[[i]], signaling = pathways.show, color.heatmap = "Reds",
+                               title.name = paste(pathways.show, "signaling ",names(cco.list)[i]))
+}
+ComplexHeatmap::draw(ht[[1]] + ht[[2]], ht_gap = unit(0.5, "cm"))
+# save as Compare_TGFb_heatmap.pdf  12*6.5
+
+#
+par(mfrow = c(1,2), xpd=TRUE)
+for (i in 1:length(cco.list)) {
+  netVisual_aggregate(cco.list[[i]], signaling = pathways.show, layout = "chord", pt.title = 3, title.space = 0.05,
+                      vertex.label.cex = 0.6, signaling.name = paste(pathways.show, names(cco.list)[i]))
+}
+# save as Compare_TGFb_chord.pdf  10*6.5
+
+#3.7 
+levels(cellchat@idents$joint)
+p<- netVisual_bubble(cellchat, sources.use = c(3,7), targets.use = c(1,2,4,5,6),  comparison = c(1, 2), angle.x = 45)
+ggsave("Compare_LR_bubble.pdf", p, width = 12, height = 8)
+
+#
+p1 <- netVisual_bubble(cellchat, sources.use = c(4,5), targets.use = c(1,2,3,6), comparison = c(1, 2), 
+                       max.dataset = 2, title.name = "Increased signaling in TIL", angle.x = 45, remove.isolate = T)
+p2 <- netVisual_bubble(cellchat, sources.use = c(4,5), targets.use = c(1,2,3,6), comparison = c(1, 2), 
+                       max.dataset = 1, title.name = "Decreased signaling in TIL", angle.x = 45, remove.isolate = T)
+pc <- p1 + p2
+ggsave("Compare_LR_regulated.pdf", pc, width = 12, height = 5.5)
+
+#
+par(mfrow = c(1, 2), xpd=TRUE)
+for (i in 1:length(cco.list)) {
+  netVisual_chord_gene(cco.list[[i]], sources.use = c(3,7), targets.use = c(1,2,4,5,6), signaling = "TGFb", 
+                       lab.cex = 0.6, legend.pos.x = 10, legend.pos.y = 20,
+                       title.name = paste0("Signaling from Stromal - ", names(cco.list)[i]))}
+# save as Compare_LR_chord.pdf  10*6.5
