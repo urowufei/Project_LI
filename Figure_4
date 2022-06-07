@@ -1,0 +1,419 @@
+#Fig.4
+
+#Scenic analysis
+rm(list = ls())
+options(stringsAsFactors = F)
+# For various visualizations and perform t-SNEs:
+BiocManager::install(c("DT", "NMF", "pheatmap", "R2HTML", "Rtsne"))
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+BiocManager::version()
+# If your bioconductor version is previous to 4.0, see the section bellow
+
+## Required
+BiocManager::install(c("AUCell", "RcisTarget"),ask = F,update = F) 
+BiocManager::install(c("GENIE3"),ask = F,update = F)  # Optional. Can be replaced by GRNBoost
+
+## Optional (but highly recommended):
+# To score the network on cells (i.e. run AUCell):
+BiocManager::install(c("zoo", "mixtools", "rbokeh"),ask = F,update = F) 
+# For various visualizations and perform t-SNEs:
+BiocManager::install(c("DT", "NMF", "ComplexHeatmap", "R2HTML", "Rtsne"),ask = F,update = F)
+# To support paralell execution (not available in Windows):
+BiocManager::install(c("doMC", "doRNG"),ask = F,update = F)
+# To export/visualize in http://scope.aertslab.org
+if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
+devtools::install_github("aertslab/SCopeLoomR", build_vignettes = TRUE)
+
+if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
+devtools::install_github("aertslab/SCENIC") 
+packageVersion("SCENIC")
+#dbFiles <- c("https://resources.aertslab.org/cistarget/databases/homo_sapiens/hg19/refseq_r45/mc9nr/gene_based/hg19-500bp-upstream-7species.mc9nr.feather",
+             "https://resources.aertslab.org/cistarget/databases/homo_sapiens/hg19/refseq_r45/mc9nr/gene_based/hg19-tss-centered-10kb-7species.mc9nr.feather")
+dbFiles <- c("https://resources.aertslab.org/cistarget/databases/mus_musculus/mm9/refseq_r45/mc9nr/gene_based/mm9-500bp-upstream-7species.mc9nr.feather",
+             "https://resources.aertslab.org/cistarget/databases/mus_musculus/mm9/refseq_r45/mc9nr/gene_based/mm9-tss-centered-10kb-7species.mc9nr.feather")
+# mc9nr: Motif collection version 9: 24k motifs
+
+dir.create("cisTarget_databases")
+setwd("cisTarget_databases")
+dbFiles
+head(sce@meta.data)
+
+rm(list = ls()) 
+setwd("~/project/1_RILI")
+sce <- readRDS("data/sce.fibroblast_0502.rds")
+table(sce$celltype)
+library(Seurat) 
+exprMat  <-  as.matrix(sce@assays$RNA@data)
+dim(exprMat)
+exprMat[1:4,1:4] 
+head(sce@meta.data)
+cellInfo <- data.frame(sce@meta.data)
+colnames(cellInfo)[which(colnames(cellInfo)=="celltype")] <- "celltype"
+colnames(cellInfo)[which(colnames(cellInfo)=="time")] <- "time"
+colnames(cellInfo)[which(colnames(cellInfo)=="therapy")] <- "therapy"
+cellInfo <- cellInfo[,c("celltype","time","therapy")]
+saveRDS(cellInfo, file="int/cellInfo.Rds")
+#cellInfo <-  sce@meta.data[,c(17,2,3)]
+#colnames(cellInfo)=c('CellType', 'nGene' ,'nUMI')
+head(cellInfo)
+table(cellInfo$celltype)
+### Initialize settings
+library(SCENIC)
+scenicOptions <- initializeScenic(org="mgi", 
+                                  dbDir="cisTarget_databases", nCores=40) 
+saveRDS(scenicOptions, file="int/scenicOptions.Rds") 
+
+names<-colnames(exprMat)
+number<-length(names)
+snumber<-sample(number,5000)
+exprMat<-exprMat[,snumber]
+##Co-expression network
+genesKept <- geneFiltering(exprMat, scenicOptions)
+exprMat_filtered <- exprMat[genesKept, ]
+exprMat_filtered[1:4,1:4]
+dim(exprMat_filtered)
+runCorrelation(exprMat_filtered, scenicOptions)
+exprMat_filtered_log <- log2(exprMat_filtered+1) 
+runGenie3(exprMat_filtered_log, scenicOptions)
+### Build and score the GRN
+exprMat_log <- log2(exprMat+1)
+scenicOptions@settings$dbs <- scenicOptions@settings$dbs["10kb"] # Toy run settings
+scenicOptions <- runSCENIC_1_coexNetwork2modules(scenicOptions)
+scenicOptions <- runSCENIC_2_createRegulons(scenicOptions,
+                                            coexMethod=c("top5perTarget")) # Toy run settings
+library(doParallel)
+scenicOptions <- initializeScenic(org="mgi", 
+                                  dbDir="cisTarget_databases", nCores=10)
+scenicOptions <- runSCENIC_3_scoreCells(scenicOptions, exprMat_log)
+scenicOptions <- runSCENIC_4_aucell_binarize(scenicOptions)
+tsneAUC(scenicOptions, aucType="AUC") # choose settings
+
+export2loom(scenicOptions, exprMat)
+saveRDS(scenicOptions, file="int/scenicOptions_Fibroblast_05.Rds") 
+scenicOptions <- readRDS("int/scenicOptions_Fibroblast_0112.Rds")
+
+logMat <- exprMat_log
+aucellApp <- plotTsne_AUCellApp(scenicOptions, logMat)
+savedSelections <- shiny::runApp(aucellApp)
+# Save the modified thresholds:
+newThresholds <- savedSelections$thresholds
+scenicOptions@fileNames$int["aucell_thresholds",1] <- "int/newThresholds.Rds"
+saveRDS(newThresholds, file=getIntName(scenicOptions, "aucell_thresholds"))
+saveRDS(scenicOptions, file="int/scenicOptions_epithelial2.Rds") 
+
+AUCmatrix <- readRDS("int/3.4_regulonAUC.Rds")
+AUCmatrix <- AUCmatrix@assays@data@listData$AUC
+AUCmatrix <- data.frame(t(AUCmatrix), check.names=F)
+RegulonName_AUC <- colnames(AUCmatrix)
+RegulonName_AUC <- gsub(' \\(','_',RegulonName_AUC)
+RegulonName_AUC <- gsub('\\)','',RegulonName_AUC)
+colnames(AUCmatrix) <- RegulonName_AUC
+scRNAauc <- AddMetaData(pbmc3k, AUCmatrix)
+scRNAauc@assays$integrated <- NULL
+saveRDS(scRNAauc,'int/scRNAauc_fibroblast.rds')
+
+BINmatrix <- readRDS("int/4.1_binaryRegulonActivity.Rds")
+BINmatrix <- data.frame(t(BINmatrix), check.names=F)
+RegulonName_BIN <- colnames(BINmatrix)
+RegulonName_BIN <- gsub(' \\(','_',RegulonName_BIN)
+RegulonName_BIN <- gsub('\\)','',RegulonName_BIN)
+colnames(BINmatrix) <- RegulonName_BIN
+scRNAbin <- AddMetaData(pbmc3k, BINmatrix)
+scRNAbin@assays$integrated <- NULL
+saveRDS(scRNAbin, 'scRNAbin.rds')
+
+dir.create('scenic_seurat')
+#FeaturePlot
+library(ggplot2)
+library(ggsci)
+library(paletteer) 
+pal <- paletteer_d("ggsci::nrc_npg")[c(5,4,3,6,1)] 
+a <- colnames(scRNAauc@meta.data)
+b <- a[25:74]
+b
+my.regulons <- b[c(6:16,23:30,32:35,37,39,41,44)]
+my.regulons
+my.regulons<- c("Jun_extended_37g","Junb_extended_77g","Fosb_extended_68g",
+                "Atf3_extended_68g","Egr1_extended_66g","Sox5_extended_27g")
+plotc = FeaturePlot(scRNAauc, features= my.regulons, label=F, reduction = "umap",raster = F,
+                 pt.size = 0.5,ncol = 6,cols = c("#ccccca", "#e61a2e"),order = T)
+plotc
+ggsave('scenic_seurat/featureplots1.png', plotc, width=18 ,height=6)
+
+#RidgePlot&VlnPlot
+head(scRNAauc@meta.data)
+my.regulons <- my.regulons[-c(1,2)]
+my.regulons
+p1 = RidgePlot(scRNAauc,features = "Atf3_33g", group.by="celltype") #+ theme(legend.position='none')
+p1
+p2 = VlnPlot(scRNAauc, features = "Atf3_33g", pt.size = 0.1, group.by="celltype") + 
+  theme(legend.position='none')
+p2
+plotc = p1 + p2
+plotc
+ggsave('scenic_seurat/Ridge-Vln_Junb_20g.png', plotc, width=10, height=8)
+
+library(ggpubr)
+p2 = VlnPlot(scRNAauc, features = my.regulons, pt.size = 0.1, raster = F,group.by="celltype",
+             split.by = "therapy",same.y.lims = T,
+             cols= pal) + 
+     theme(legend.position='right')
+p2
+library(ggpubr)
+p2 = VlnPlot(scRNAauc, features = my.regulons, pt.size = 0.1, raster = F,group.by="celltype",
+             split.by = "time",same.y.lims = T,
+             cols= pal) + 
+  theme(legend.position='right')
+p2
+
+library(pheatmap)
+cellInfo <- readRDS("int/cellInfo.Rds")
+celltype = subset(cellInfo,select = 'celltype')
+time = subset(cellInfo,select = 'time')
+therapy =subset(cellInfo,select = 'therapy')
+
+AUCmatrix <- t(AUCmatrix)
+BINmatrix <- t(BINmatrix)
+
+myAUCmatrix <- AUCmatrix[rownames(AUCmatrix)%in%my.regulons,]
+myBINmatrix <- BINmatrix[rownames(BINmatrix)%in%my.regulons,]
+myAUCmatrix2 <- as.matrix((scale(myAUCmatrix)))
+class(myAUCmatrix2)
+col <- colorRampPalette(c("red", "white", "blue"))(256)
+heatmap(myAUCmatrix2, scale = "none", col=col)
+
+library(pheatmap)
+p <- pheatmap(myAUCmatrix2, show_colnames=F, annotation_col= celltype, cluster_cols = F,cluster_rows = T,
+         filename = 'scenic_seurat/myAUCmatrix_heatmap_test.pdf',
+         width = 8, height = 5)
+library(dplyr)
+library(tidyverse)
+library(paletteer) 
+mycolors <- paletteer_d("ggsci::nrc_npg")[c(1,3,4,9,5,2,6)] 
+mycolors
+ann_colors=list(celltype =c(C1 ="#00A087FF", C2 = "#E64B35FF",  C3="#7E6148FF"))
+head(ann_colors)
+a<-colnames(myAUCmatrix2)
+meta <- as.data.frame(a)
+rownames(meta) <- a
+cellInfo$a <- rownames(cellInfo)
+meta2 <- left_join(meta,cellInfo, by = "a")
+meta3 <- column_to_rownames(meta2,var="a")
+meta4 <- meta3 %>%
+  arrange(meta3$celltype)
+data <- myAUCmatrix2[,rownames(meta4)]
+identical(colnames(myAUCmatrix2),rownames(meta))
+pheatmap(data, show_colnames=F, annotation_col= celltype, cluster_cols = F,cluster_rows = T,
+         annotation_colors = ann_colors,
+         filename = 'scenic_seurat/myAUCmatrix_heatmap_bycelltype.pdf',
+         width = 8, height = 5)
+
+meta4 <- meta3 %>%
+  arrange(meta3$celltype)
+data <- myAUCmatrix[,rownames(meta4)]
+identical(colnames(myAUCmatrix),rownames(meta))
+ann_colors=list(celltype =c(C1 ="#00A087FF", C2 = "#E64B35FF",  C3="#7E6148FF"))
+head(ann_colors)
+pheatmap(data, show_colnames=F, annotation_col= celltype, cluster_cols = F,cluster_rows = T,
+         annotation_colors = ann_colors,
+         filename = 'scenic_seurat/myAUCmatrix_heatmap_bycell.pdf',
+         width = 8, height = 5)
+
+pheatmap(myBINmatrix, show_colnames=F, annotation_col=celltype,
+         filename = 'scenic_seurat/myBINmatrix_heatmap-test2.pdf',
+         color = colorRampPalette(colors = c("white","black"))(100),
+         width = 6, height = 5)
+
+a<-colnames(myBINmatrix)
+meta <- as.data.frame(a)
+rownames(meta) <- a
+cellInfo$a <- rownames(cellInfo)
+meta2 <- left_join(meta,cellInfo, by = "a")
+meta3 <- column_to_rownames(meta2,var="a")
+meta4 <- meta3 %>%
+  arrange(meta3$celltype)
+data <- myBINmatrix[,rownames(meta4)]
+identical(colnames(myBINmatrix),rownames(meta))
+table(celltype)
+pheatmap(data, show_colnames=F, annotation_col=celltype,
+         cluster_rows = T,
+         annotation_colors = ann_colors,
+         filename = 'scenic_seurat/myBINmatrix_heatmap_bycelltype.pdf',
+         color = colorRampPalette(colors = c("white","black"))(100),
+         width = 6, height = 5)
+
+
+pheatmap(data, show_colnames=F, annotation_col=celltype,
+         cluster_rows = T,cluster_cols = F,
+         annotation_colors = ann_colors,
+         filename = 'scenic_seurat/myBINmatrix_heatmap_bycelltype_unano.pdf',
+         color = colorRampPalette(colors = c("white","black"))(100),
+         width = 6, height = 5)
+
+
+
+library(dplyr)
+library(Seurat)
+fibro_sce <- readRDS("data/sce.fibroblast_0502.rds")
+sce.all.int<-fibro_sce
+Idents(sce.all.int) <- "celltype"
+head(Idents(sce.all.int))
+markers_genes <- FindAllMarkers(sce.all.int, logfc.threshold = 0.1, test.use = "wilcox",
+                                min.pct = 0.1, min.diff.pct = 0.2, only.pos = TRUE, max.cells.per.ident = 50, 
+                                assay = "RNA")
+gene_group <- markers_genes[,c("gene","p_val","cluster")]
+colnames(gene_group) <- c("gene","p_val","Cluster")
+gene_group
+library(clusterProfiler)
+library(org.Mm.eg.db)
+allcluster_go=data.frame()
+for (i in unique(gene_group$Cluster)) {
+  small_gene_group=filter(gene_group,gene_group$Cluster==i)
+  df_name=bitr(small_gene_group$gene, fromType="SYMBOL", toType=c("ENTREZID"), OrgDb="org.Mm.eg.db")
+  go <- enrichGO(gene         = unique(df_name$ENTREZID),
+                 OrgDb         = org.Mm.eg.db,
+                 keyType       = 'ENTREZID',
+                 ont           = "ALL",
+                 pAdjustMethod = "BH",
+                 pvalueCutoff  = 0.05,
+                 qvalueCutoff  = 0.2,
+                 readable      = TRUE)
+  go_res=go@result
+  if (dim(go_res)[1] != 0) {
+    go_res$cluster=i
+    allcluster_go=rbind(allcluster_go,go_res)
+  }
+}
+head(allcluster_go[,c("ID","Description","qvalue","cluster")])
+write.csv(allcluster_go,file = "output/Figure4/new/Fibro_all_cluster_go_terms.csv")
+allcluster_go <- read.csv(file = "output/Figure4/new/Fibro_all_cluster_go_terms.csv")
+
+table(allcluster_go$cluster)
+go_C2 <- filter(allcluster_go, allcluster_go$cluster== "C2")
+write.csv(allcluster_go,file = "output/Figure4/new/FibroC2_go_terms_0503.csv")
+library(tibble)
+gene_group <- markers_genes[,c("gene","p_val","cluster","avg_log2FC")]
+small_gene_group=filter(gene_group,gene_group$cluster== "Apoe+Fibro")
+geneList <- small_gene_group[,4]
+names(geneList) <- as.character(small_gene_group[,1])
+geneList <- sort(geneList, decreasing = TRUE)
+
+df_name=bitr(small_gene_group$gene, fromType="SYMBOL", toType=c("ENTREZID"), OrgDb="org.Mm.eg.db")
+ego <- enrichGO(gene         = unique(df_name$ENTREZID),
+               OrgDb         = org.Mm.eg.db,
+               keyType       = 'ENTREZID',
+               ont           = "BP",
+               pAdjustMethod = "BH",
+               pvalueCutoff  = 0.05,
+               qvalueCutoff  = 0.2,
+               readable      = TRUE)
+ego
+#GO Gene Set Enrichment Analysis
+egseGO <- gseGO(geneList, OrgDb=org.Mm.eg.db,
+                ont='CC',keyType="ENTREZID",
+                nPerm=1000, minGSSize=100, maxGSSize=500,
+                pvalueCutoff=0.5, verbose=FALSE, by="fgsea")
+head(egseGO,1);dim(egseGO)
+head(data.frame(egseGO$ID,egseGO$Description))
+
+###################################################################################
+#Visualization of Functional Enrichment Result
+###################################################################################
+library(enrichplot)
+library(ggplot2)
+p1=barplot(ego,showCategory=10)
+p1
+ggsave(p1,filename = "output/GSEA_barplot_Day7vscontrol-cc.pdf",width = 8,height = 6)
+
+p2=dotplot(ego)
+p2
+ggsave(p2,filename = "output/GSEA_dotplot_Day7vscontrol-cc.pdf",width = 8,height = 6)
+
+dotplot(ego,title='Top5 GO terms of each sub-class',
+        showCategory=5,split='ONTOLOGY')+ 
+  facet_grid(ONTOLOGY~.,scale="free")
+
+#dotplot(egseKEGG)
+#> wrong orderBy parameter; set to default `orderBy = "x"`
+
+emapplot(ego,showCategory=10) 
+xx <- compareCluster(gene_df, fun="enrichKEGG",
+                     organism="mmu", pvalueCutoff=0.05)
+p1 <- emapplot(xx)
+p2 <- emapplot(xx,legend_n=2) 
+p3 <- emapplot(xx,pie="count")
+p4 <- emapplot(xx,pie="count", pie_scale=1.5, layout="kk")
+cowplot::plot_grid(p1, p2, p3, p4, ncol=2, labels=LETTERS[1:4])
+
+library(enrichplot)
+library(cowplot)
+library(ggnewscale)
+
+p3=cnetplot(ego, categorySize="pvalue", showCategory=5,
+            foldChange=geneList,colorEdge = TRUE)
+
+ggsave(p3,filename = "output/Figure4/GSEA_cnetplot_apoe_bp.pdf",width = 8,height = 6)
+p4=cnetplot(ego, foldChange=geneList, circular = TRUE, colorEdge = TRUE)
+ggsave(p4,filename = "output/Figure4/GSEA_cnetplot—circle_apoe_bp.pdf",width = 10,height = 8)
+
+cnetplot(ego,showCategory=5,foldChange=geneList,circular=TRUE,colorEdge=TRUE)
+p1 <- cnetplot(ego,showCategory=3,node_label="category")
+p2 <- cnetplot(ego,showCategory=3,node_label="gene") 
+p3 <- cnetplot(ego,showCategory=3,node_label="all") 
+p4 <- cnetplot(ego,showCategory=3,node_label="none") 
+cowplot::plot_grid(p1, p2, p3, p4, ncol=2, labels=LETTERS[1:4])
+
+#5 UpSet Plot
+library(ggupset)
+p <- upsetplot(ego) 
+p
+ggsave(p,filename = "output/UpSet_Plot_Day7vscontrol.pdf",width = 8,height = 6)
+
+p <- upsetplot(egseGO)
+ggsave(p,filename = "output/UpSet_Plot2_Day7vscontrol.pdf",width = 8,height = 6)
+
+#6 Heatmap-like functional classification
+p<- heatplot(ego,foldChange=geneList)
+p
+ggsave(p,filename = "output/Heatmap_func_class_Day7vscontrol-cc.pdf",width = 15,height = 9)
+
+#7 GO DAG graph
+#investigate how the significant GO terms are distributed over the GO graph. 
+#The goplot function shows subgraph induced by most significant GO terms.
+p<-goplot(ego,showCategory=10)
+p
+ggsave(p,filename = "output/GO_DAG_graph_fibroblast_gobp.pdf",width = 10,height = 8)
+
+#8 ridgeline plot for expression distribution of GSEA result
+p <- ridgeplot(egseGO)
+p
+ggsave(p,filename = "output/Ridgeplot_Day7vscontrol-cc.pdf",width = 8,height = 6)
+
+#9 running score and preranked list of GSEA result
+p1 <- gseaplot(egseGO,geneSetID=1,by="runningScore",title=egseGO$Description[1])
+p2 <- gseaplot(egseGO,geneSetID=1,by="preranked",title=egseGO$Description[1])
+p3 <- gseaplot(egseGO,geneSetID=2,by="runningScore",title=egseGO$Description[2])
+p4 <- gseaplot(egseGO,geneSetID=2,by="preranked",title=egseGO$Description[2])
+p <- cowplot::plot_grid(p1, p2, p3, p4, ncol=2, labels=LETTERS[1:4])
+ggsave(p,filename = "output/GSEA_score_1-2_Day7vscontrol-cc.pdf",width = 10,height = 8)
+
+p1 <- gseaplot(egseGO,geneSetID=3,by="runningScore",title=egseGO$Description[3])
+p2 <- gseaplot(egseGO,geneSetID=3,by="preranked",title=egseGO$Description[3])
+p3 <- gseaplot(egseGO,geneSetID=4,by="runningScore",title=egseGO$Description[4])
+p4 <- gseaplot(egseGO,geneSetID=4,by="preranked",title=egseGO$Description[4])
+p <- cowplot::plot_grid(p1, p2, p3, p4, ncol=2, labels=LETTERS[1:4])
+ggsave(p,filename = "output/GSEA_score_3-4_Day7vscontrol-cc.pdf",width = 10,height = 8)
+
+gseaplot(egseGO,geneSetID=1,title=egseGO$Description[1])
+p3 <- gseaplot2(egseGO,3,title=egseGO$Description[3])
+p5 <- gseaplot2(egseGO,1:3,subplots = 1)
+p6 <- gseaplot2(egseGO,geneSetID=1:3, pvalue_table=TRUE,
+                color = c("#E495A5", "#86B875", "#7DB0DD"), 
+                ES_geom = "dot")
+p7 <- gseaplot2(egseGO,4:6,subplots = 1)
+p8 <- gseaplot2(egseGO,geneSetID=4:6, pvalue_table=TRUE,
+                color = c("#E495A5", "#86B875", "#7DB0DD"), 
+                ES_geom = "dot")
+p <- cowplot::plot_grid(p5, p6,p7,p8, ncol=2, labels=LETTERS[1:4])
+p
+ggsave(p,filename = "output/GSEA_score_c1-6_Day7vscontrol-cc.pdf",width = 20,height = 12)
