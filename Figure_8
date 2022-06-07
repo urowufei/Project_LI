@@ -1,0 +1,385 @@
+##Fig.8
+#######################################################################################
+rm(list=ls())
+options(stringsAsFactors = F)
+library(Seurat)
+library(ggplot2)
+library(clustree)
+library(cowplot)
+library(dplyr)
+library(Matrix)
+library(ggsci)
+library(scater)
+library(tidyverse)
+library(paletteer) 
+library(Seurat)
+library(ggplot2)
+library(ggsci)
+library("scales")
+mycolors <- pal_igv("default")(51) 
+pal <- paletteer_d("ggsci::nrc_npg")[c(1,3,4,9,5,2,6)] 
+grouping <- c("#8491B4FF","#F39B7FFF")
+
+sce <- readRDS("data/IPF_seurat_from_mtx.rds")
+###### step2:QC ######
+sce=PercentageFeatureSet(sce, "^MT", col.name = "percent_mito")
+sce=PercentageFeatureSet(sce, "^RP", col.name = "percent_ribo")
+sce=PercentageFeatureSet(sce, "^HB[^(p)]", col.name = "percent_hb")
+selected_c <- WhichCells(sce, expression = nFeature_RNA > 1000)
+selected_f <- rownames(sce)[Matrix::rowSums(sce@assays$RNA@counts > 0 ) > 3]
+sce.all.filt <- subset(sce, features = selected_f, cells = selected_c)
+feats <- c("nFeature_RNA", "nCount_RNA", "percent_mito", "percent_ribo", "percent_hb")
+library(ggplot2)
+#feats <- c("nFeature_RNA", "nCount_RNA")
+p1=VlnPlot(sce.all.filt, group.by = "orig.ident", features = feats, pt.size = 0.001, ncol = 3) + 
+  NoLegend()
+p1
+ggsave(filename="output/Vlnplot_nFeature-nCount.pdf",plot=p1)
+ggsave(filename="output/Vlnplot_nFeature-nCount.png",plot=p1)
+feats <- c("percent_mito", "percent_ribo", "percent_hb")
+p2=VlnPlot(sce.all.filt, group.by = "orig.ident", features = feats, pt.size = 0.01, ncol = 3) + 
+  NoLegend()
+p2
+ggsave(filename="output2/Vlnplot_mito_ribo_hb.pdf",plot=p2)
+ggsave(filename="output2/Vlnplot_mito_ribo_hb.png",plot=p2)
+selected_mito <- WhichCells(sce.all.filt, expression = percent_mito < 15)
+selected_ribo <- WhichCells(sce.all.filt, expression = percent_ribo > 3)
+selected_hb <- WhichCells(sce.all.filt, expression = percent_hb < 1)
+sce.all.filt <- subset(sce.all.filt, cells = selected_mito)
+sce.all.filt <- subset(sce.all.filt, cells = selected_ribo)
+sce.all.filt <- subset(sce.all.filt, cells = selected_hb)
+#save(sce.all.filt,file = "data/sce.all.filt.Rdata")
+saveRDS(sce.all.filt,file = "data/sce.all.filt.rds")
+feats <- c("nFeature_RNA", "nCount_RNA")
+p1_filtered=VlnPlot(sce.all.int, group.by = "orig.ident", features = feats, pt.size = 0.01, ncol = 3) + 
+  NoLegend()
+p1_filtered
+ggsave(filename="output/Vlnplot1_filtered.pdf",plot=p1_filtered)
+feats <- c("percent_mito", "percent_ribo", "percent_hb")
+p2_filtered=VlnPlot(sce.all.filt, group.by = "orig.ident", features = feats, pt.size = 0.01, ncol = 3) + 
+  NoLegend()
+p2_filtered
+ggsave(filename="output2/Vlnplot2_filtered.pdf",plot=p2_filtered)
+# Filter MALAT1 
+sce.all.filt <- sce.all.filt[!grepl("MALAT1", rownames(sce.all.filt),ignore.case = T), ]
+# Filter Mitocondrial 
+sce.all.filt <- sce.all.filt[!grepl("^MT-", rownames(sce.all.filt),ignore.case = T), ]
+dim(sce.all.filt)
+
+sce.all.filt = NormalizeData(sce.all.filt)
+s.genes=Seurat::cc.genes.updated.2019$s.genes
+g2m.genes=Seurat::cc.genes.updated.2019$g2m.genes
+sce.all.filt=CellCycleScoring(object = sce.all.filt, 
+                              s.features = s.genes, 
+                              g2m.features = g2m.genes, 
+                              set.ident = TRUE)
+p4=VlnPlot(sce.all.filt, features = c("S.Score", "G2M.Score"), group.by = "orig.ident", 
+           ncol = 2, pt.size = 0.1)
+p4
+ggsave(filename="output/Vlnplot4_cycle.pdf",plot=p4)
+
+sce.all.filt@meta.data  %>% ggplot(aes(S.Score,G2M.Score))+geom_point(aes(color=Phase))+
+  theme_minimal()
+ggsave(filename="output/cycle_details.pdf" )
+#doublets 
+sce.all.filt = FindVariableFeatures(sce.all.filt)
+sce.all.filt = ScaleData(sce.all.filt, 
+                         vars.to.regress = c("nFeature_RNA", "percent_mito"))
+sce.all.filt = RunPCA(sce.all.filt, npcs = 20)
+sce.all.filt = RunTSNE(sce.all.filt, npcs = 20)
+sce.all.filt = RunUMAP(sce.all.filt, dims = 1:10)
+# define the expected number of doublet cellscells.
+
+library(DoubletFinder)
+nExp <- round(ncol(sce.all.filt) * 0.04)  # expect 4% doublets
+sce.all.filt <- doubletFinder_v3(sce.all.filt, 
+                                 pN = 0.25, pK = 0.09, 
+                                 nExp = nExp, PCs = 1:10)
+saveRDS(sce.all.filt, "data/sce.all_qc.rds")
+
+# name of the DF prediction can change, so extract the correct column name.
+head(sce.all.filt@meta.data)
+DF.name = colnames(sce.all.filt@meta.data)[grepl("DF.classifications_0.25_0.09_4363", 
+                                                 colnames(sce.all.filt@meta.data))]
+p5.dimplot=cowplot::plot_grid(ncol = 2, DimPlot(sce.all.filt, group.by = "orig.ident") + NoAxes(), 
+                              DimPlot(sce.all.filt, group.by = DF.name) + NoAxes())
+p5.dimplot
+ggsave(filename="output/doublet_dimplot.pdf", plot=p5.dimplot)
+ggsave(filename="output/doublet_dimplot.png", plot=p5.dimplot)
+
+p5.vlnplot=VlnPlot(sce.all.filt, features = "nFeature_RNA", 
+                   group.by = DF.name, pt.size = 0.001)
+p5.vlnplot
+ggsave(paste0("doublet_vlnplot.png"),
+       plot=p5.vlnplot)
+ggsave(filename="output/doublet_vlnplot.png", plot=p5.vlnplot)
+ggsave(filename="output/doublet_vlnplot.pdf", plot=p5.vlnplot)
+
+print(table(sce.all.filt@meta.data[, DF.name] ))
+
+phe=sce.all.filt@meta.data
+phe
+table(sce.all.filt@meta.data$DF.classifications_0.25_0.09_4363)
+sce.all.filt.dbf = sce.all.filt[,sce.all.filt@meta.data$DF.classifications_0.25_0.09_4363%in%c("Singlet")]
+#Epi_sce2 = sce[, sce$celltype %in% c( "Epithelial")]
+
+save(sce.all.filt.dbf,file = 'data/sce.all.filt_from_DoubletFinder.Rdata')
+rm(sce.all.filt)
+load("data/sce.all.filt_from_DoubletFinder.Rdata")
+########################
+
+sce.all <- sce.all.filt.dbf
+table(sce.all@meta.data$orig.ident)
+
+pid=unique(sce.all$orig.ident)
+grouping <- read.csv("data/IPFgrouping.csv",header = T,sep = ",")
+ident <- as.data.frame(pid)
+ident
+clinical <- left_join(ident,grouping,by = "pid")
+clinical
+save(clinical,file = 'data/clinical.rda')
+load("data/clincial.Rdata")
+
+table(sce.all$orig.ident)
+head(clinical)
+head(sce.all@meta.data)
+tmp=merge(sce.all@meta.data,clinical,by.x = 'orig.ident',by.y='pid')
+head(tmp)
+identical(tmp$percent_mito,sce.all@meta.data$percent_mito)
+rownames(tmp)=rownames(sce.all@meta.data)
+sce.all@meta.data=tmp
+
+sce.all = NormalizeData(sce.all)
+sce.all <- FindVariableFeatures(sce.all, nfeatures = 3000)
+sce.all
+#An object of class Seurat 
+#26443 features across 94053 samples within 1 assay 
+#Active assay: RNA (26443 features, 3000 variable features)
+#3 dimensional reductions calculated: pca, tsne, umap
+sce.all = ScaleData(sce.all 
+                    ,vars.to.regress = c("nFeature_RNA", "percent_mito"))  
+sce.all <- RunPCA(sce.all, npcs = 30)
+sce.all <- RunTSNE(sce.all, dims = 1:30)
+sce.all <- RunUMAP(sce.all, dims = 1:30)
+sce.all.int=FindNeighbors(sce.all, dims = 1:30, k.param = 60, prune.SNN = 1/15)
+for (res in c(0.01, 0.05, 0.1, 0.2, 0.3, 0.5,0.8,1)) {
+  sce.all.int=FindClusters(sce.all.int, graph.name = "RNA_snn", resolution = res, algorithm = 1)
+}
+apply(sce.all.int@meta.data[,grep("RNA_snn_res",colnames(sce.all.int@meta.data))],2,table)
+#sce.all.int@meta.data$
+p5_tree <- clustree(sce.all.int@meta.data, prefix = "RNA_snn_res.") 
+p5_tree
+ggsave(filename="output/clustertree-res.pdf",plot=p5_tree,height = 12,width = 10)
+sce.all.int <- FindClusters(sce.all.int, graph.name = "RNA_snn", resolution = 0.2, algorithm = 1)
+p6<- DimPlot(sce.all.int, reduction = "tsne", group.by = "RNA_snn_res.0.2", label = T,label.box = F)+NoAxes()
+p7<- DimPlot(sce.all.int, reduction = "umap", group.by = "RNA_snn_res.0.2", label = T,label.box = F)+NoAxes()
+p6
+p7
+ggsave(filename="output/DimPlot-tsne-r0.2.pdf",plot=p6,height = 6,width = 8)
+ggsave(filename="output/DimPlot-umap-r0.2.pdf",plot=p7,height = 6,width = 8)
+
+sce.all.int <- readRDS(file = "data/sce.all.int_ssn_res0.2.rds")
+table(sce.all.int$seurat_clusters)
+markers_genes <- FindAllMarkers(sce.all.int, logfc.threshold = 0.1, test.use = "wilcox",
+                                min.pct = 0.1, min.diff.pct = 0.2, only.pos = TRUE, max.cells.per.ident = 50, 
+                                assay = "RNA")
+markers_genes <- read.csv(file = "data/markergenes_all_r0.2.csv")
+top10 <- markers_genes %>% group_by(cluster) %>% top_n(n=10, wt =p_val)
+top20 
+top1000 <- markers_genes %>% group_by(cluster) %>% top_n(n=1000, wt =p_val)
+p8 <- DoHeatmap(sce.all.int,top10$gene,size=1 )
+p8
+ggsave(filename="output/Find_all_markers_heatmap.pdf",plot=p8,height = 16,width = 20)
+write.csv(markers_genes, file = "data/markergenes_all_0.2.csv")
+markers_genes<- read.csv("data/markergenes_all_0.2.csv")
+rm(sce.all.list)
+rm(alldata.anchors)
+##Heatmap
+p9 <- DoHeatmap(sce.all.int,size = 2,   
+                features = as.character(unique(top10$gene)), 
+                group.by = "celltype", group.colors = c("#C77CFF","#7CAE00","#00BFC4","#F8766D","#AB82FF"))+ 
+  scale_fill_gradientn(colours = c("navy","white","firebrick3")) 
+p9
+ggsave(filename="output/Find_all_markers_heatmap_top10-v2.pdf",plot=p9,width = 20,height = 16)
+##Heatmap
+library(ggplot2) 
+library(stringr)
+genes_to_check <- list( 
+  Epithelial=c("EPCAM","AGER","PDPN","SFTPC","KRT5","KRT17","FOXJ1","TMEM190","CAPS","MKI67","CDK1"),
+  Endothelial = c("PECAM1","VWF","CCL21"), 
+  Fibroblast = c("ACTA2","PDGFRB","PDGFRA","HAS2","LUM"),
+  Immune = c("PTPRC"),
+  Lymphoid = c("CD3E","FOXP3","IL7R","CD8A","CCL5"),
+  NK = c("NCR1","KLRB1","NKG7"),
+  Macrophage = c("LYZ","FCGR1A"),
+  Monocyte = c("CD14","S100A9","FCN1"),
+  B = c("CD19","CD79A","MS4A1","JCHAIN","IGHG1","IGLL5"),
+  MAST = c("CPA3","KIT"))
+p_markers <- DotPlot(sce.all.int,features = genes_to_check,assay='RNA',group.by = "seurat_clusters") +
+  theme(axis.text.x=element_text(angle=45,hjust=1.2,vjust = 1.1,size = 8))
+p_markers
+
+celltype=data.frame(ClusterID=0:14,
+                    celltype='un')
+celltype[celltype$ClusterID %in% c("14"),2]='Mast'
+celltype[celltype$ClusterID %in% c('0',"1","6","10"),2]='Myeloid' 
+celltype[celltype$ClusterID %in% c('5'),2]='Lymphoid'  
+celltype[celltype$ClusterID %in% c("11"),2]='B_cells'
+celltype[celltype$ClusterID %in% c("7","8"),2]='Endothelial'
+celltype[celltype$ClusterID %in% c("9","12"),2]='Fibroblast'
+celltype[celltype$ClusterID %in% c('2',"3","4","13"),2]="Epithelial"  
+head(celltype)
+celltype 
+table(celltype$celltype)
+sce.all.int@meta.data$celltype = "NA"
+for(i in 1:nrow(celltype)){
+  sce.all.int@meta.data[which(sce.all.int@meta.data$RNA_snn_res.0.2 == celltype$ClusterID[i]),'celltype'] <- celltype$celltype[i]}
+table(sce.all.int@meta.data$celltype)
+
+DimPlot(sce.all.int, reduction = "tsne", group.by = "celltype", label = T, label.box = T)
+DimPlot(sce.all.int, reduction = "umap", group.by = "celltype", label = T, label.box = T)
+DimPlot(sce.all.int, reduction = "tsne", group.by = "group", label = F, label.box = F,cols= pal)
+DimPlot(sce.all.int, reduction = "umap", group.by = "group", label = F, label.box = F,cols= pal)
+DimPlot(sce.all.int, reduction = "tsne", group.by = "Phase", label = F, label.box = F,cols= pal)
+DimPlot(sce.all.int, reduction = "umap", group.by = "Phase", label = F, label.box = F,cols= pal)
+table(sce.all.int@meta.data$celltype)
+saveRDS(sce.all.int, file = "data/IPF_sce.all_anno.rds")
+########################
+
+
+########################
+load("data/IPF_sce.all_anno.Rdata")
+##
+genes_to_check <- c("EPCAM","SFTPC","SFTPD","AGER","KRT17","MUC5B",
+                    "PECAM1","VWF",
+                    "ACTA2","PDGFRB","LUM","PDGFRA",
+                    "CD79A","CD19","MS4A1","JCHAIN",
+                    "PTPRC","CD3E","CCL5","NKG7",
+                    "LYZ","S100A9", "FCGR1A","C1QA",
+                    "CPA3","KIT")
+DotPlot(sce.all.int, features = genes_to_check, group.by = "celltype")+theme_bw()+
+  theme(panel.grid = element_blank(),  
+        axis.text.x=element_text(angle=90,hjust = 1,vjust=0.5))+ 
+  scale_color_gradientn(values = seq(0,1,0.2),colours = c('#330066','#336699','#66CC66','#FFCC33'))+
+  labs(x=NULL,y=NULL)+guides(size=guide_legend(order=3)) 
+
+a <- table(sce.all.int$celltype)
+b <- rownames(a)
+b
+sce.all.int$celltype <- factor(x = sce.all.int$celltype, levels = c("Epithelial", "Endothelial", "Fibroblast","B_cells",
+                                                                    "Lymphoid",
+                                                                    "Myeloid","Mast"))  
+
+####
+p <- DimPlot(sce.all.int,reduction = "umap", group.by = "celltype",cols= pal,pt.size = 0.5,label = T,repel = T,raster = F)+  
+  NoLegend()+labs(x = "UMAP1", y = "UMAP2") +   
+  theme(axis.text.y = element_blank(),   
+        axis.ticks.y = element_blank(),   
+        axis.text.x = element_blank(),   
+        axis.ticks.x = element_blank())+  
+  theme(panel.border = element_rect(fill=NA,color="black", size=1, linetype="solid"))  
+p
+ggsave("output/all_umap_7c_label.pdf", p, width = 8, height = 6)
+##Fig8c 
+grouping <- c("#8491B4FF","#F39B7FFF")
+DimPlot(sce.all.int,reduction = "umap", group.by = "group",cols= grouping,pt.size = 0.3,label = F,repel = T)+
+  labs(x = "UMAP1", y = "UMAP2") +   
+  theme(axis.text.y = element_blank(),   
+        axis.ticks.y = element_blank(),   
+        axis.text.x = element_blank(),   
+        axis.ticks.x = element_blank())+  
+  theme(panel.border = element_rect(fill=NA,color="black", size=1, linetype="solid"))  
+
+
+##featureplot
+mycolor <- c('lightgrey', 'blue','seagreen2')
+#Senescence
+genes_to_check <- c("MCUB","FBL","HIST1H1D","HIST1H1A","FAM129A","ANP32B","PARP1","LBR","SSRP1",
+                    "CDCA7L","HIST1H1E","ITPRIPL1")
+#Senescence
+#"Adipor1","Adipor1","Grem1"
+genes_to_check <- c("CCL2","CXCL14","CXCL12","HP","SERPING1","MT2A","IGFBP4","APOE",
+                    "CYR61","GAS6","MMP13","TMEM176A","COL3A1","CD302")
+genes_to_check <- c("APOE","MT2A","CCL2","CXCL12","CD302","TMEM176A","SERPING1","IGFBP4")
+
+##DotPlot
+DotPlot(sce.all.int, features = genes_to_check, group.by = "celltype")+coord_flip()+theme_bw()+
+  theme(panel.grid = element_blank(),  
+        axis.text.x=element_text(angle=90,hjust = 1,vjust=0.5))+
+  scale_color_gradientn(values = seq(0,1,0.2),colours = c('#330066','#336699','#66CC66','#FFCC33'))+
+  labs(x=NULL,y=NULL)+guides(size=guide_legend(order=3)) 
+
+##FeaturePlot
+FeaturePlot(sce.all.int,features = genes_to_check,raster=FALSE,
+            reduction = "umap",pt.size = 0.5,ncol = 4,cols = c("#ccccca", "#e61a2e"),order = T)&
+  theme_bw()&
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "none",
+    axis.ticks = element_blank(),
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    plot.title = element_text(hjust = 0.5,size = 20)
+  )
+
+####Vlnplot
+pal <- paletteer_d("ggsci::nrc_npg")[c(1,3,4,9,5,2,6)] 
+VlnPlot(sce.all.int, features = genes_to_check, group.by = "celltype", 
+        stacked=T,pt.size=0,  split.by = "group",
+        cols = pal,
+        direction = "horizontal", 
+        x.lab = '', y.lab = '')+
+  theme(axis.text.x = element_blank(),   
+        axis.ticks.x = element_blank())
+pdf5*10
+
+library(MySeuratWrappers)  
+VlnPlot(sce.all.int, features = genes_to_check, group.by = "celltype", 
+        stacked=T,pt.size=0,  
+        cols = my36colors, 
+        direction = "horizontal",
+        x.lab = '', y.lab = '')+
+  theme(axis.text.x = element_blank(),   
+        axis.ticks.x = element_blank())
+pdf5*10
+
+
+library(gplots)
+phe=sce.all.int@meta.data
+
+tab.1=table(phe$seurat_clusters, phe$celltype)
+tab.1 
+head(phe)
+tb=as.data.frame(table(phe$celltype),stringsAsFactors = F)
+tb=tb[order(tb$Freq,decreasing=F),]
+tb
+colnames(tb) <- c('Celltype', 'Freq')
+percentage <- scales::percent(tb$Freq / sum(tb$Freq))
+percentage
+labs <- paste0(tb$Celltype,'(', percentage, ')')
+labs
+tb$cell=factor(tb$Celltype,levels=tb$Celltype)
+
+#mycolors <- pal_igv("default")(51) 
+mycolors <-paletteer_d("ggsci::nrc_npg")[c(1,3,4,9,5,2,6)] 
+
+p.pie= ggplot(tb, aes(x = "", y = Freq, fill = cell)) + 
+  geom_bar(stat = "identity",width = 1) + 
+  scale_fill_manual(breaks = tb$cell, labels = labs,values=mycolors) +
+  labs(x = "", y = "", title = "") +
+  coord_polar(theta = "y")  +
+  theme(axis.ticks = element_blank()) 
+p.pie
+colnames(phe)
+table(phe$orig.ident)
+test=phe[,c("orig.ident" ,"group","Phase","celltype")] 
+test$cell=factor(test$celltype,levels=rev(tb$Celltype))
+head(test)
+ggplot(test, aes(x=orig.ident, fill=cell)) +
+  geom_bar(position="fill") + scale_fill_manual(values=mycolors) +
+  labs(title='Cell proportion of each sample') +theme_bw()  
+ggplot(test, aes(x=group, fill=cell)) +
+  geom_bar(position="fill") + scale_fill_manual(values=mycolors) +
+  labs(title='Cell proportion of each therapy')
+
+saveRDS(sce.all.int, file = "data/sce.cca_anno.rds")
