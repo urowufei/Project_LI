@@ -1,0 +1,452 @@
+#Fig7 lymphoid 
+########################################################
+#Step1 
+rm(list = ls())
+setwd("~/project/1_RILI")
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(clustree)
+library(cowplot)
+load(file = 'data/RILI_sce.all_anno_res1_2022.Rdata')
+sce.all.int
+DimPlot(sce.all.int, reduction = 'umap', 
+        label = TRUE, pt.size = 0.1) + NoLegend()
+
+Idents(sce.all.int)
+levels(sce.all.int)
+head(sce.all.int@meta.data)
+genes_to_check = c('Cd14', 'Ly6g',"S100a9")
+DotPlot(sce.all.int, group.by = 'seurat_clusters',
+        features = unique(genes_to_check)) + RotatedAxis()
+DotPlot(sce.all.int, # group.by = 'seurat_clusters',
+        features = unique(genes_to_check)) + RotatedAxis()
+
+p1=DimPlot(sce.all.int, reduction = 'umap', group.by = 'seurat_clusters',
+           label = TRUE, pt.size = 0.5) + NoLegend()
+p1
+p2=DotPlot(sce.all.int, group.by = 'seurat_clusters',
+           features = unique(genes_to_check)) + RotatedAxis()
+p2
+library(patchwork)
+p1+p2
+table(sce.all.int@meta.data$celltype) 
+sce.lymphoid = sce.all.int[,sce.all.int@meta.data$celltype %in%c('Acti_B',"Acti_CD8T","Naive_B","Memo_B","Naive_CD4T",
+                                                                "Naive_CD8T","NK","Prol_CD8T","Th17","Th2","Tregs")]
+rm(sce.all.int)
+sce.all<- sce.lymphoid
+table(sce.all@meta.data$orig.ident)
+sce.all.list <- SplitObject(sce.all, split.by = "orig.ident")
+for (i in 1:length(sce.all.list)) {
+  print(i)
+  sce.all.list[[i]] <- NormalizeData(sce.all.list[[i]], verbose = FALSE)
+  sce.all.list[[i]] <- FindVariableFeatures(sce.all.list[[i]], selection.method = "vst", 
+                                            nfeatures = 3000, verbose = FALSE)
+}
+
+alldata.anchors <- FindIntegrationAnchors(object.list = sce.all.list, dims = 1:30, 
+                                          reduction = "cca")
+sce.all.int <- IntegrateData(anchorset = alldata.anchors, dims = 1:30, new.assay.name = "CCA")
+sce.all.int=ScaleData(sce.all.int)
+sce.all.int=RunPCA(sce.all.int, npcs = 30)
+sce.all.int=RunTSNE(sce.all.int, dims = 1:30)
+sce.all.int=RunUMAP(sce.all.int, dims = 1:30)
+p4.compare=plot_grid(ncol = 3,
+                     DimPlot(sce.all, reduction = "pca", group.by = "orig.ident")+NoAxes()+ggtitle("PCA raw_data"),
+                     DimPlot(sce.all, reduction = "tsne", group.by = "orig.ident")+NoAxes()+ggtitle("tSNE raw_data"),
+                     DimPlot(sce.all, reduction = "umap", group.by = "orig.ident")+NoAxes()+ggtitle("UMAP raw_data"),
+                     
+                     DimPlot(sce.all.int, reduction = "pca", group.by = "orig.ident")+NoAxes()+ggtitle("PCA integrated"),
+                     DimPlot(sce.all.int, reduction = "tsne", group.by = "orig.ident")+NoAxes()+ggtitle("tSNE integrated"),
+                     DimPlot(sce.all.int, reduction = "umap", group.by = "orig.ident")+NoAxes()+ggtitle("UMAP integrated")
+)
+p4.compare
+ggsave(filename="output/Figure7/Cca-myeloid.compare4.pdf",plot=p4.compare)
+
+#save(sce.all.int, file = "data2/sce.all.int_cca.Rdata")
+#load("data2/sce.all.int_cca.Rdata")
+table(sce.all.int@meta.data$therapy)
+sce.all.int=FindNeighbors(sce.all.int, dims = 1:30, k.param = 60, prune.SNN = 1/15)
+for (res in c(0.01, 0.05, 0.1, 0.2, 0.3, 0.5,0.8,1)) {
+  sce.all.int=FindClusters(sce.all.int, graph.name = "CCA_snn", resolution = res, algorithm = 1)
+}
+apply(sce.all.int@meta.data[,grep("CCA_snn_res",colnames(sce.all.int@meta.data))],2,table)
+
+p5_tree <- clustree(sce.all.int@meta.data, prefix = "CCA_snn_res.") 
+p5_tree
+ggsave(filename="output/Figure7/clustertree-myeloid.pdf",plot=p5_tree,height = 12,width = 10)
+sce.all.int <- FindClusters(sce.all.int, graph.name = "CCA_snn", resolution = 1, algorithm = 1)
+p6<- DimPlot(sce.all.int, reduction = "tsne", group.by = "CCA_snn_res.0.5", label = T,label.box = F)+NoAxes()
+p7<- DimPlot(sce.all.int, reduction = "umap", group.by = "CCA_snn_res.0.5", label = T,label.box = F)+NoAxes()
+p6
+p7
+ggsave(filename="output/Figure7/DimPlot-tsne-r1.pdf",plot=p6,height = 6,width = 8)
+ggsave(filename="output/Figure7/DimPlot-umap-r1.pdf",plot=p7,height = 6,width = 8)
+table(sce.all.int$seurat_clusters)
+markers_genes <- FindAllMarkers(sce.all.int, logfc.threshold = 0.1, test.use = "wilcox",
+                                min.pct = 0.1, min.diff.pct = 0.2, only.pos = TRUE, max.cells.per.ident = 50, 
+                                assay = "RNA")
+#markers_genes <- read.csv(file = "output/Figure7/markergenes_0425.csv")
+
+top5 <- markers_genes %>% group_by(cluster) %>% top_n(n=5, wt =p_val)
+top20 
+top1000 <- markers_genes %>% group_by(cluster) %>% top_n(n=1000, wt =p_val)
+p8 <- DoHeatmap(sce.all.int,top5$gene,size=1 )
+p8
+ggsave(filename="output/Figure7/Find_all_markers_heatmap.pdf",plot=p8,height = 16,width = 20)
+write.csv(markers_genes, file = "data/lymphoid-markergenes_all_r1.csv")
+###Heatmap
+sce.all.int$seurat_clusters
+p9 <- DoHeatmap(sce.all.int,size = 2,   
+                features = as.character(unique(top5$gene)), 
+                group.by = "seurat_clusters", group.colors = c("#C77CFF","#7CAE00","#00BFC4","#F8766D","#AB82FF"))+ 
+  scale_fill_gradientn(colours = c("navy","white","firebrick3"))   
+p9
+ggsave(filename="output/Find_all_markers_heatmap_myeloid_top5.pdf",plot=p9,width = 20,height = 16)
+
+#手动注释
+library(ggplot2) 
+library(stringr)
+table(sce.all.int@meta.data$seurat_clusters)
+DimPlot(sce.all.int,
+        label = TRUE,group.by = "seurat_clusters")  + NoLegend()
+
+genes_to_check <- list( 
+  Prolif = c("Top2a","Mki67","Cdk1"),
+  Immature_B = c("Cd19","Ebf1","Cd24"),
+  Mature_B = c("Cd20","Cd79a","Ly6a","Bank1"),
+  Plasma_B = c("Igkc","Ighm","Iglc1","Iglc2","Igka","Apoe"),
+  Mem_B= c("Cxcr5","Cxcr4","Cd40"),
+  Naive_CD8T = c("Lef1","Il7r","Sell"),
+  Activated_CD8T = c("Cd8a","Gzmk","Gzmb","Cd8b1"),
+  Naive_CD4T = c("Cd4","Igfbp4","Ifngr2"),
+  Tregs = c("Foxp3","Ikzf2","Nrp1","Icos","Odc1","Tnfrsf9"),
+  Th2 = c("Gata3","Nfil3"),
+  Th17 = c("Il17a","Il17f","Rorc"), 
+  NK = c("Klrb1c","Klra8","Klrd1"),  #"Nkg7"
+  NKT = c("Fcgr3","Itgam")) 
+p_markers <- DotPlot(sce.all.int,features = genes_to_check,assay='RNA') +
+  theme(axis.text.x=element_text(angle=45,hjust=1.2,vjust = 1.1,size = 8))
+p_markers
+
+celltype=data.frame(ClusterID=0:23,
+                    celltype='un')
+#T
+celltype[celltype$ClusterID %in% c( '8'),2]='Prol_CD8T'
+celltype[celltype$ClusterID %in% c( "1","13"),2]='NKT'  
+celltype[celltype$ClusterID %in% c( '3',"11","22"),2]='Naive_CD8T'  
+celltype[celltype$ClusterID %in% c( "2"),2]='Naive_CD4T'  
+celltype[celltype$ClusterID %in% c( '9',"16","18"),2]='Treg' 
+celltype[celltype$ClusterID %in% c( '14'),2]='Th17' 
+celltype[celltype$ClusterID %in% c( '20'),2]='Th2' 
+celltype[celltype$ClusterID %in% c( '5',"7"),2]='Acti_CD8T' 
+#B
+celltype[celltype$ClusterID %in% c( '21'),2]='Immature_B'
+celltype[celltype$ClusterID %in% c( '0',"4","6"),2]='Mature_B' 
+celltype[celltype$ClusterID %in% c( '12'),2]='Plasma_C1'
+celltype[celltype$ClusterID %in% c( "15"),2]='Plasma_C2'
+celltype[celltype$ClusterID %in% c( '10'),2]='Mem_B' 
+head(celltype)
+celltype 
+table(celltype$celltype)
+sce.all.int@meta.data$celltype = "NA"
+sce.all.int@meta.data$CCA_snn_res.1
+for(i in 1:nrow(celltype)){
+  sce.all.int@meta.data[which(sce.all.int@meta.data$CCA_snn_res.1 == celltype$ClusterID[i]),'celltype'] <- celltype$celltype[i]}
+table(sce.all.int@meta.data$celltype)
+DimPlot(seurat_data, reduction = "tsne", group.by = "celltype", label=T, label.box = T,label.size=5, pt.size=1) + ggtitle('Change cluster order')
+p1 <- DimPlot(sce.all.int, reduction = "tsne", group.by = "celltype", label = T, label.box = T,pt.size=0.5)
+p2 <- DimPlot(sce.all.int, reduction = "umap", group.by = "celltype", label = T, label.box = T,pt.size=0.5)
+p1
+p2
+saveRDS(sce.all.int,file = "data/sce.lymphoid_clean_anno.rds")
+
+##featureplot
+FeaturePlot(sce.all.int,features = c("H2-Ab1","Cd79b","Igkc",
+                                     "Cd8a","Gzmb",
+                                     "Lef1",
+                                     "Klrb1c",
+                                     "Top2a","Mki67",
+                                     "Il17a",
+                                     "Gata3",
+                                     "Foxp3"
+                                     ),
+            reduction = "umap",pt.size = 0.5,ncol = 3,cols = c("#ccccca", "#e61a2e"),order = T)&
+  theme_bw()&
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "none",
+    axis.ticks = element_blank(),
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    plot.title = element_text(hjust = 0.5,size = 20)
+  )
+
+##markergene dotplot
+genes_to_check <- c("Ebf1",
+                    "Cd79a","Bank1","Igkc",
+                    "Iglc1","Iglc2","Apoe","Ly6a",
+                    "rna_Cxcr5","rna_Cxcr4",
+                    "Irf4",
+                    "Lef1","Igfbp4",
+                    "Il17a","Il17f",
+                    "rna_Nfil3","Gata3",
+                    "Nrp1","Foxp3","Ikzf2",
+                    "Cd8a",
+                    "Gzmk","Gzmb",
+                    "Top2a","Mki67","Cdk1",
+                    "Klrb1c","Klra8")
+DotPlot(sce.all.int, features = genes_to_check, group.by = "celltype")+coord_flip()+theme_bw()+ 
+  theme(panel.grid = element_blank(),  
+        axis.text.x=element_text(angle=90,hjust = 1,vjust=0.5))+
+  scale_color_gradientn(values = seq(0,1,0.2),colours = c('#330066','#336699','#66CC66','#FFCC33'))+
+  labs(x=NULL,y=NULL)+guides(size=guide_legend(order=3)) 
+##调整顺序
+a <- table(sce.all.int$celltype)
+b <- rownames(a)
+b
+sce.all.int$celltype <- factor(x = sce.all.int$celltype, levels = c("Immature_B", "Mature_B", "Plasma_C1","Plasma_C2", "Mem_B",
+                                                                    "Naive_CD4T","Th17","Th2","Treg",
+                                                                    "Naive_CD8T", "Acti_CD8T","Prol_CD8T",
+                                                                    "NKT"))  
+##############################UMAP##############################
+library(paletteer) 
+library(Seurat)
+library(ggplot2)
+library(ggsci)
+library("scales")
+
+mycolors <- pal_igv("default")(51) #51色panel
+show_col(pal)
+table(sce.all.int@meta.data$celltype)
+pal <- paletteer_d("ggsci::nrc_npg")[c(1,3,4,9,5,2,6)] 
+#uMAP
+p <- DimPlot(sce.all.int,reduction = "umap", group.by = "celltype",cols= mycolors,pt.size = 0.3,
+             label = T,repel = T)+  
+  NoLegend()+labs(x = "UMAP1", y = "UMAP2") +   
+  theme(axis.text.y = element_blank(),   
+        axis.ticks.y = element_blank(),   
+        axis.text.x = element_blank(),   
+        axis.ticks.x = element_blank())+  
+  theme(panel.border = element_rect(fill=NA,color="black", size=1, linetype="solid"))  
+p
+ggsave("output/all_umap_30c_label.pdf", p, width = 8, height = 6)
+
+p <- DimPlot(sce.all.int,reduction = "umap", group.by = "celltype",cols= mycolors,pt.size = 0.6,
+             label = F,repel = T, split.by = "orig.ident") +  
+  NoLegend()+labs(x = "UMAP1", y = "UMAP2") +   
+  theme(axis.text.y = element_blank(),   
+        axis.ticks.y = element_blank(),   
+        axis.text.x = element_blank(),   
+        axis.ticks.x = element_blank())+  
+  theme(panel.border = element_rect(fill=NA,color="black", size=1, linetype="solid"))  
+p
+ggsave("output/Figure7/Fig7c_umap_split.pdf", p, width = 20, height = 4)
+########################################################################################
+library(dplyr)
+Idents(sce.all.int) <- "celltype"
+head(Idents(sce.all.int))
+
+markers_genes <- FindAllMarkers(sce.all.int, logfc.threshold = 0.1, test.use = "wilcox",
+                                min.pct = 0.1, min.diff.pct = 0.2, only.pos = TRUE, max.cells.per.ident = 50, 
+                                assay = "RNA")
+write.csv(markers_genes,file = "output/Figure7/markergenes_Myeloid.csv")
+
+top30 <- markers_genes %>% group_by(cluster) %>% top_n(n=30, wt =p_val)
+top10 
+top1000 <- markers_genes %>% group_by(cluster) %>% top_n(n=1000, wt =p_val)
+p8 <- DoHeatmap(sce.all.int,top30$gene,size=1 )
+p8
+ggsave(filename="output/Figure7/Find_all_markers_heatmap-myeloid-yellow.pdf",plot=p8,height = 16,width = 20)
+write.csv(markers_genes, file = "output/Figure7/markergenes_all_r1.csv")
+##Heatmap
+sce.all.int$seurat_clusters
+p9 <- DoHeatmap(sce.all.int,size = 2,   
+                features = as.character(unique(top30$gene)), 
+                group.by = "celltype", group.colors = c("#C77CFF","#7CAE00","#00BFC4","#F8766D","#AB82FF"))+ 
+  scale_fill_gradientn(colours = c("navy","white","firebrick3"))
+p9
+ggsave(filename="output/Figure7/Find_all_markers_heatmap_myeloid.pdf",plot=p9,width = 20,height = 16)
+
+library(gplots)
+phe=sce.all.int@meta.data
+tab.1=table(phe$seurat_clusters, phe$celltype)
+tab.1 
+pro='cluster'
+pdf(file = paste0(pro,'last_celltype_vs_seurat_clusters.pdf'),width = 12)
+balloonplot(tab.1, main ="last_celltype VS seurat_clusters ", xlab ="", ylab="",
+            label = T, show.margins = F)
+dev.off()
+head(phe)
+tb=as.data.frame(table(phe$celltype),stringsAsFactors = F)
+tb=tb[order(tb$Freq,decreasing=F),]
+tb
+write.csv(tb,file="all-celltype-fractions.csv")
+colnames(tb) <- c('Celltype', 'Freq')
+percentage <- scales::percent(tb$Freq / sum(tb$Freq))
+percentage
+labs <- paste0(tb$Celltype,'(', percentage, ')')
+labs
+tb$cell=factor(tb$Celltype,levels=tb$Celltype)
+#mycolors<-c("#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5", "#D9D9D9",
+"#BC80BD", "#CCEBC5")
+
+p.pie= ggplot(tb, aes(x = "", y = Freq, fill = cell)) + 
+  geom_bar(stat = "identity",width = 1) + 
+  scale_fill_manual(breaks = tb$cell, labels = labs,values=mycolors) +
+  labs(x = "", y = "", title = "") +
+  coord_polar(theta = "y")  +
+  theme(axis.ticks = element_blank()) 
+p.pie
+ggsave(plot=p.pie,filename="output/total_pie-all.pdf",width=8, height=6)
+p2 <- p_barplot + coord_polar()+labs(x = "", y = "", title = "Cell Types") + 
+  theme(axis.text.y = element_blank()) +     
+  theme(axis.ticks = element_blank()) +     
+  theme(panel.border = element_blank()) + 
+  theme(plot.title = element_text(hjust=0.5,size=14,face = "bold") )+
+  theme(axis.text.x=  element_blank() )
+p2
+ggsave(plot=p2,filename="output/Total_pie2.pdf",width=6, height=7)
+
+library(patchwork)
+p.pie+p_barplot
+colnames(phe)
+table(phe$orig.ident)
+test=phe[,c("orig.ident" ,"celltype")] 
+test$cell=factor(test$celltype,levels=rev(tb$Celltype))
+head(test)
+table(test$orig.ident)
+test$orig.ident <- factor(test$orig.ident, levels=c("Control","ICI_d7","ICI_d30","IR_d7",
+                                                    "IR_d30","iRT_d7","iRT_d30"), ordered=TRUE)
+p.bar.sample=ggplot(test, aes(x=orig.ident, fill=cell)) +
+  geom_bar(position="fill") + 
+  scale_fill_manual(values=mycolors) +
+  theme(axis.text.x = element_text(angle=45, hjust=1, vjust=1))+
+  labs(title='Cell proportion of each sample')   
+p.bar.sample
+ggsave(plot=p.bar.sample,filename="output/Bar.sample.pdf",
+       width=10, height=6)
+colnames(phe)
+table(phe$orig.ident)
+test=phe[,c("orig.ident" ,"time", "therapy","Phase","celltype")] 
+test$cell=factor(test$celltype,levels=rev(tb$Celltype))
+head(test)
+p.bar.sample=ggplot(test, aes(x=orig.ident, fill=cell)) +
+  geom_bar(position="fill") + scale_fill_manual(values=fei_col) +
+  labs(title='Cell proportion of each sample') +theme_bw()  
+p.bar.sample
+ggsave(plot=p.bar.sample,filename="output/Figure7/new/Bar.sample.pdf",
+       width=5, height=5)
+p.bar.group1=ggplot(test, aes(x=therapy, fill=cell)) +
+  geom_bar(position="fill") + scale_fill_manual(values=fei_col) +
+  labs(title='Cell proportion of each therapy')
+p.bar.group1
+ggsave(plot=p.bar.group1,filename="output/Figure7/new/Bar.group-therapy.pdf",width=3, height=5)
+p.bar.group2=ggplot(test, aes(x=time, fill=cell)) +
+  geom_bar(position="fill") + scale_fill_manual(values=fei_col) +
+  labs(title='Cell proportion of each timepoint')
+p.bar.group2
+ggsave(plot=p.bar.group2,filename="output/Figure7/new/Bar.group-timepoint.pdf",width=3, height=5) 
+p.bar.group=ggplot(test, aes(x=Phase, fill=cell)) +
+  geom_bar(position="fill") + scale_fill_manual(values=fei_col) +
+  labs(title='Cell proportion of each Phase')
+p.bar.group
+ggsave(plot=p.bar.group,filename="output/Figure7/new/Bar.group-phase.pdf",width=3, height=5)
+library(patchwork)
+p.patch <- p.bar.sample+p.bar.group1+p.bar.group2
+p.patch
+ggsave(plot=p.patch,filename="output/Figure7/new/Bar.group-patch.pdf",width=16, height=6)
+
+library(ComplexHeatmap)
+mat <- GetAssayData(sce.all.int, slot = "counts")
+mat <- log2(mat+1)
+gene_features <- top5
+library(corrplot)
+av <-AverageExpression(sce.all.int,
+                       group.by = "celltype",
+                       assays = "RNA") 
+av=av[[1]]
+head(av)
+cg=names(tail(sort(apply(av, 1, sd)),1000))
+pheatmap::pheatmap(cor(av[cg,]),color = col(100))
+corrplot(cor(av[cg,]))
+corrplot(cor(av[cg,]),method = "pie")
+corrplot(cor(av[cg,]),method = "color",addCoef.col = "grey",number.font =1)
+col2 = colorRampPalette(c("navy","blue","firebrick3"))
+col = colorRampPalette(c("#003366","white","#990033"))
+low="#003366", high="#990033", mid="white"
+col
+corrplot(cor(av[cg,]),col = col(100))
+
+#Senescent Signature
+table(sce.all.int@meta.data$celltype)
+##featureplot
+FeaturePlot(sce.all.int,features = genes_to_check,
+            reduction = "umap",pt.size = 0.5,ncol = 4,cols = c("#ccccca", "#e61a2e"),order = T)&
+  theme_bw()&
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "none",
+    axis.ticks = element_blank(),
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    plot.title = element_text(hjust = 0.5,size = 20)
+  )
+
+##dotplot
+#Senescence
+genes_to_check <- c("Mcub","Fbl","Hist1h1d","Hist1h1a","Fam129a","Anp32b","Parp1","Lbr","Ssrp1",
+                    "Cdca7l","Hist1h1e","Itpripl1")
+#Senescence
+genes_to_check <- c("Ccl2","Cxcl14","Cxcl12","Hp","Trf","Serping1","Mt1","Tmem176b","Mt2","Igfbp4","Apoe",
+                    "Ccn1","Gas6","Mmp13","Tmem176a","Col3a1","Cd302")
+DotPlot(sce.all.int, features = genes_to_check, group.by = "celltype")+coord_flip()+theme_bw()+
+  theme(panel.grid = element_blank(),  
+        axis.text.x=element_text(angle=90,hjust = 1,vjust=0.5))+
+  scale_color_gradientn(values = seq(0,1,0.2),colours = c('#330066','#336699','#66CC66','#FFCC33'))+
+  labs(x=NULL,y=NULL)+guides(size=guide_legend(order=3)) 
+
+#Senescence
+table(sce.all.int@meta.data$therapy)
+genes_to_check <- c("Ccl2","Cxcl14","Cxcl12","Hp","Trf","Serping1","Mt1","Tmem176b","Mt2","Igfbp4","Apoe",
+                    "Ccn1","Gas6","Mmp13","Tmem176a","Col3a1")
+library(paletteer) 
+pal <- paletteer_d("ggsci::nrc_npg")[c(6,5,1,3,4,9,2)] 
+pal
+pal=colorRampPalette(RColorBrewer::brewer.pal(n = 9,name="YlOrRd"))(100)
+#by therapy
+p <- VlnPlot(sce.all.int, features = genes_to_check , group.by = "celltype", stack = T, pt.size = 0.1,
+             split.by = "therapy",cols = pal,flip = T)
+p
+#by time
+p <- VlnPlot(fibro_sce, features = genes_to_check , group.by = "celltype", stack = T, pt.size = 0.1,
+             split.by = "time",cols = pal,flip = T)
+p
+#control vs ICI， 
+sce1 <-  fibro_sce[,fibro_sce@meta.data$therapy %in%c('Control',"ICI")]
+p <- VlnPlot(sce1, features = genes_to_check , group.by = "celltype", stack = T, pt.size = 0.1,
+             split.by = "therapy",cols = pal,flip = T)
+p
+p <- VlnPlot(sce1, features = c("Mmp13","Mt1") , group.by = "celltype", stack = F, pt.size = 0.1,
+             split.by = "therapy",split.plot = T,cols = pal)
+##markergene dotplot
+DotPlot(sce.all.int, features = genes_to_check, group.by = "celltype")+theme_bw()+  
+  theme(panel.grid = element_blank(),  
+        axis.text.x=element_text(angle=90,hjust = 1,vjust=0.5))+
+  scale_color_gradientn(values = seq(0,1,0.2),colours = c('#330066','#336699','#66CC66','#FFCC33'))+
+  labs(x=NULL,y=NULL)+guides(size=guide_legend(order=3)) 
+
+#Apoe
+p <- VlnPlot(sce.all.int, features = c("Apoe") , group.by = "celltype", 
+             split.by = "time",stack = F, pt.size = 0, cols = fei_col,flip = T)
+p
+#NFkB Signiture
+genes_to_check <- c("Apoe","Csf1r","Cxcl1","Cxcl16","Ccl2","Ccl7")
+p <- VlnPlot(sce.all.int, features = genes_to_check , group.by = "celltype", stack = F,pt.size = 0, cols = mycolors,flip = T)
+p
+DotPlot(sce.all.int, features = genes_to_check, group.by = "celltype")+coord_flip()+theme_bw()+
+  theme(panel.grid = element_blank(),  
+        axis.text.x=element_text(angle=90,hjust = 1,vjust=0.5))+
+  scale_color_gradientn(values = seq(0,1,0.2),colours = c('#330066','#336699','#66CC66','#FFCC33'))+
+  labs(x=NULL,y=NULL)+guides(size=guide_legend(order=3)) 
