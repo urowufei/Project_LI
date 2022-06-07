@@ -1,0 +1,436 @@
+#RILI_Project-Figure 1 
+#######################################################################################
+rm(list=ls())
+options(stringsAsFactors = F)
+setwd("./data")
+library(Seurat)
+library(ggplot2)
+library(clustree)
+library(cowplot)
+library(dplyr)
+library(corrplot)
+library(ComplexHeatmap)
+
+samples=list.files('original_data/')
+samples 
+sceList = lapply(samples,function(pro){ 
+  #pro=samples[1]
+  folder=file.path('original_data/',pro) 
+  print(pro)
+  print(folder)
+  print(list.files(folder))
+  sce=CreateSeuratObject(counts = Read10X(folder),
+                         project =  pro )
+  return(sce)
+})
+names(sceList) = samples
+sce <- merge(sceList[[1]], y= sceList[ -1 ] ,
+             add.cell.ids=samples) 
+sce<- sce.all.filt
+#caculate the mitochondrial genes
+sce=PercentageFeatureSet(sce, "^mt-", col.name = "percent_mito")
+#caculate the ribosome genes
+sce=PercentageFeatureSet(sce, "^rp", col.name = "percent_ribo")
+#caculate the hb genes
+sce=PercentageFeatureSet(sce, "^hb-", col.name = "percent_hb")
+
+# Visualization of Features and counts
+feats <- c("nFeature_RNA", "nCount_RNA")
+p1=VlnPlot(sce, group.by = "orig.ident", features = feats, pt.size = 0.01, ncol = 2) + 
+  NoLegend()
+p1
+feats2 <- c("nFeature_RNA", "nCount_RNA", "percent_mito", "percent_ribo", "percent_hb")
+p2=VlnPlot(sce, group.by = "orig.ident", features = feats2, pt.size = 0.01, ncol = 5) + 
+  NoLegend()
+p2
+
+#Filteration of low quality cells
+selected_c <- WhichCells(sce, expression = nFeature_RNA > 300)
+selected_f <- rownames(sce)[Matrix::rowSums(sce@assays$RNA@counts > 0 ) > 3]
+sce.all.filt <- subset(sce, features = selected_f, cells = selected_c)
+
+#Filteration of low quality cells
+selected_mito <- WhichCells(sce.all.filt, expression = percent_mito < 5)
+selected_ribo <- WhichCells(sce.all.filt, expression = percent_ribo > 3)
+selected_hb <- WhichCells(sce.all.filt, expression = percent_hb < 0.1)
+sce.all.filt <- subset(sce.all.filt, cells = selected_mito)
+sce.all.filt <- subset(sce.all.filt, cells = selected_ribo)
+sce.all.filt <- subset(sce.all.filt, cells = selected_hb)
+save(sce.all.filt,file = "data/sce.all.filt.Rdata")
+
+########################
+sce.all=sce.all.filt
+sce.all = NormalizeData(sce.all)
+sce.all <- FindVariableFeatures(sce.all, nfeatures = 3000)
+sce.all
+
+#Scale Data 
+sce.all = ScaleData(sce.all 
+                    ,vars.to.regress = c("nFeature_RNA", "percent_mito"))  
+#RunPCA and UMAP
+sce.all <- RunPCA(sce.all, npcs = 30)
+sce.all <- RunTSNE(sce.all, dims = 1:30)
+sce.all <- RunUMAP(sce.all, dims = 1:30)
+# 聚类分析
+sce.all <- FindNeighbors(sce.all, dims = 1:30)
+for (res in c(0.01, 0.05, 0.1, 0.2, 0.3, 0.5,0.8,1)) {
+  sce.all <- FindClusters(sce.all, graph.name = "RNA_snn", resolution = res, algorithm = 1)
+}
+clustree(sce.all@meta.data, prefix = "RNA_snn_res.") 
+
+###########################
+#Intergradation
+sce.all.list <- SplitObject(sce.all.filt, split.by = "orig.ident")
+for (i in 1:length(sce.all.list)) {
+  print(i)
+  sce.all.list[[i]] <- NormalizeData(sce.all.list[[i]], verbose = FALSE)
+  sce.all.list[[i]] <- FindVariableFeatures(sce.all.list[[i]], selection.method = "vst", 
+                                            nfeatures = 2000, verbose = FALSE)
+}
+###find anchors based on VariableFeatures
+alldata.anchors <- FindIntegrationAnchors(object.list = sce.all.list, dims = 1:30, 
+                                          reduction = "cca")
+##Intergradate data based on anchors
+sce.all.int <- IntegrateData(anchorset = alldata.anchors, dims = 1:30, new.assay.name = "CCA")
+sce.all.int=ScaleData(sce.all.int)
+sce.all.int=RunPCA(sce.all.int, npcs = 30)
+sce.all.int=RunTSNE(sce.all.int, dims = 1:30)
+sce.all.int=RunUMAP(sce.all.int, dims = 1:30)
+#comparision 
+p4.compare=plot_grid(ncol = 3,
+                     DimPlot(sce.all, reduction = "pca", group.by = "orig.ident")+NoAxes()+ggtitle("PCA raw_data"),
+                     DimPlot(sce.all, reduction = "tsne", group.by = "orig.ident")+NoAxes()+ggtitle("tSNE raw_data"),
+                     DimPlot(sce.all, reduction = "umap", group.by = "orig.ident")+NoAxes()+ggtitle("UMAP raw_data"),
+                     
+                     DimPlot(sce.all.int, reduction = "pca", group.by = "orig.ident")+NoAxes()+ggtitle("PCA integrated"),
+                     DimPlot(sce.all.int, reduction = "tsne", group.by = "orig.ident")+NoAxes()+ggtitle("tSNE integrated"),
+                     DimPlot(sce.all.int, reduction = "umap", group.by = "orig.ident")+NoAxes()+ggtitle("UMAP integrated")
+)
+p4.compare
+#save data
+save(alldata.anchors,sce.all.list,sce.all.int, file = "data/alldata_anchored_step1-3.Rdata")
+
+###########################
+sce.all.int=FindNeighbors(sce.all.int, dims = 1:30, k.param = 60, prune.SNN = 1/15)
+for (res in c(0.01, 0.05, 0.1, 0.2, 0.3, 0.5,0.8,1)) {
+  sce.all.int=FindClusters(sce.all.int, graph.name = "CCA_snn", resolution = res, algorithm = 1)
+}
+apply(sce.all.int@meta.data[,grep("CCA_snn_res",colnames(sce.all.int@meta.data))],2,table)
+p5_tree <- clustree(sce.all.int@meta.data, prefix = "CCA_snn_res.") 
+p5_tree
+p6<- DimPlot(sce.all.int, reduction = "tsne", group.by = "CCA_snn_res.1", label = T,label.box = F)+NoAxes()
+p7<- DimPlot(sce.all.int, reduction = "umap", group.by = "CCA_snn_res.1", label = T,label.box = F)+NoAxes()
+p7
+p6
+
+table(sce.all.int$seurat_clusters)
+markers_genes <- FindAllMarkers(sce.all.int, logfc.threshold = 0.1, test.use = "wilcox", 
+                                min.pct = 0.1, min.diff.pct = 0.2, only.pos = TRUE, max.cells.per.ident = 50, 
+                                assay = "RNA")
+top10 <- markers_genes %>% group_by(cluster) %>% top_n(n=10, wt =p_val)
+top30 <- markers_genes %>% group_by(cluster) %>% top_n(n=30, wt =p_val)
+DoHeatmap(sce.all.int,top10$gene,size=3 )
+write.csv(top30, file = "data/RILI_sce_cca_markergenes_top30.csv")
+save(sce.all.int,markers_genes,file = "data/sce.all.int_cca_ssn.Rdata")
+load("data/sce.all.int_cca_ssn.Rdata")
+
+########################################################################
+#Annotation for clusters
+load("data/sce.all.int_cca_ssn.Rdata")
+load("data/RILI_sce.all_anno_res1_2022.Rdata")
+DimPlot(sce.all.int, reduction = "umap", group.by = "CCA_snn_res.1", label = T,label.box = F)+NoAxes()
+
+library(ggplot2) 
+library(stringr)
+genes_to_check <- list( 
+  Epithelial = c("Epcam","Sec24b","Krt19","Ndufs2"),
+  Ciliated = c("Sox4",'Sox9',"Mdk"),
+  Prolif = c("Mki67",'Cdk1',"Top2a"),
+  Progenitor= c("Mcm5","Mcm6","Ube2c","Uhrf1","Ccnb1ip1","Hexim1"),
+  AT2 = c("Sftpc","Sftpb","Sftpa1","Apoe"),   #7,5,4,
+  AT1 = c("Ager","Limch1","Emp2","Pmp22","Igfbp3"),
+  Basal = c("Krt8","Hopx","Slc7a11","Pdpn"),  
+  Ciliated = c("Dnph1","Mlf1","Traf3ip1"),  
+  Clara = c("Scgb3a2","Cyp2f2","Chad"),
+  Goblet_cells=c("Gzma","Ccl5","Nkg7","Scin"),
+  Myoepithelial = c("Peak1","Plk2","Csrnp2"),
+  Infl = c("Cxcl1","Cxcl10","Ccl4","Nlrp3"),
+  Stromal = c("Mgp","Adgrf5"), 
+  Fibroblast  = c("Col1a2","Dcn","Mylk","Col1a1","Gng11","Ppbp","Agtr1a","Scgb1a1"),
+  Naive_CD8T = c("Lef1","Il7r","Sell"),
+  Myeloid = c("Ms4a6c","Csf1r"),
+  Neutrophil = c("S100a9","S100a8","Retnlg","Il1b"))
+  B = c("Cd79a","Cd79b","Cd19","Ms4a1","Igkc","Cd38"),
+  Activated_CD8T = c("Cd8a","Gzmk","Gzmb","Cd8b1"),
+  Naive_CD4T = c("Cd4","Igfbp4","Ifngr2"),
+  Tregs = c("Foxp3","Ikzf2","Nrp1","Icos","Odc1","Tnfrsf9"),
+  Th2 = c("Gata3","Nfil3"),
+  Th17 = c("Il17a","Il17f","Rorc"), 
+  NK = c("Klrb1c","Klra8","Klrd1"),  #"Nkg7"
+  NKT = c("Fcgr3","Itgam"),
+  Macrophages  = c("Apoe","Adgre4","Fcgr1","C1qb","C1qa","C1qc"), 
+  M1_like = c("Ccr7","Cd86"),
+  M2_like = c("Cd163","Mrc1"),
+  cDCs = c("Itgax","H2afy","Clec9a"),
+  pDCs = c("Siglech","Bst2"),#4，6
+  Monocyte = c("Cd14","Ccr5","Ly6c2","Ly6c","Ccr2","Ccl5","S100a4"),   
+  MDSC = c("Arg2","Ly6g"),
+  Myofibroblast = c("Acta2","Myh11","Mmp11","Hdac8","Fn1","Desmin"),
+  Lipofibroblast = c("Pdgfra","Apoe","Lpl","Adrp","Fabp1","Fabp5"),
+  Epi_fibro = c("Cldn18","Hopx","Ager"),
+  Pericytes = c("Cspg4","Trpc6","Pdgfrb","Postn","Cox4i2"),
+  Endothelial_cells = c("Cldn5","Pecam1","Eng","Cdh5","Ramp2","Adgre5","Lyve1"),
+  Erythroid = c("Ube2l6","Alas2","Tent5c","Snca"),
+  Capillary = c("Car4"),
+  Immune cells
+  T_cells = c("Ccl5"),
+  CD4=c("Pdcd1","Lag3","Cd4",),
+  CD8=c( "Prf1","Cd8a"), #"Icos",
+  Treg = c("Foxp3","Ikzf2","Ctla4"),
+  NK_cells = c("Ncr1","Klrb1",),
+  Macrophage = c(,'Cd163', 'C1qa'),
+  Monocyte = c("Cd14","Fcna"),
+  cDCs=c("Fcer1a","Clec9a"), #"Cxcr3","Irf7"
+  pDCs=c("Jchain"),
+  B_cell= c( "Blnk"),#"Ms4a1"
+  Plasma_B  = c("Ighg1"),#"Jchain"
+  Mast = c("Cpa3") )#
+  PrU_like=c("AQP3","CD44"), NE=c("CHGA"),
+  Stromal_cells = c("CD34","CD200","PECAM1"),
+  B_cell=c("CD79A", "SLAMF7")
+
+p_markers <- DotPlot(sce.all.int,features = genes_to_check,assay='RNA',group.by = "CCA_snn_res.1") +
+  theme(axis.text.x=element_text(angle=45,hjust=1.2,vjust = 1.1,size = 8))
+p_markers
+
+# Markergene visualization
+sce.all.int@assays$RNA
+genes_to_check <- c("Mgp","Pdgfra","Col1a1","Acta2","Myh11","Lpl","Mmp25","Pecam1","Hpgd","Emp2","Kdr","Cldn5","Cox4i2",
+                    "Cd79a","Bank1","Ighm","Ebf1","Irf8","Nkg7","Ccl5","Cd8a","Gzma","Cd8b1",
+                    "Lef1","Zeb1","Dusp10","Il7r","Ctla4","Icos","Top2a","Mki67","Il17a","Rora",
+                    "Il1rl1","Il2ra","Igkc","Iglc1","Iglc2","Chil3","Mrc1","Kcnip4",
+                    "S100a4","Lyz2","Csf1r","S100a9","S100a8","Retnlg",
+                    "C1qa","C1qc","C1qb",
+                    "Plet1","Tnf","Siglech","Ccr9","Bst2",
+                    "Ccl6","Plin2",
+                    "Ager","Cldn18","Cst3","Sftpc","Sftpb","Scgb1a1","Scgb1a2")
+
+DotPlot(sce.all.int, features = genes_to_check, group.by = "celltype")+coord_flip()+theme_bw()+
+  theme(panel.grid = element_blank(),  
+        axis.text.x=element_text(angle=90,hjust = 1,vjust=0.5))+
+  scale_color_gradientn(values = seq(0,1,0.2),colours = c('#330066','#336699','#66CC66','#FFCC33'))+
+  labs(x=NULL,y=NULL)+guides(size=guide_legend(order=3)) 
+
+sce.all.int$celltype <- factor(x = sce.all.int$celltype, levels = c('Fibro_C1','Fibro_C2','Myofibro','Lipofibro',
+                                                                    'Endothelial','Capillary','Pericytes',
+                                                                    'Mature_B','Memo_B','NK','Acti_CD8T','Naive_CD8T','Naive_CD4T','Tregs',
+                                                                    'Prol_CD8T','Th17','Th2',"Plasma",
+                                                                    'TRAM_C1','MoAM','Neutrophil','AMs','TRAM_C2','pDC',"Prol_AM",'cDC',
+                                                                    'AT1','Goblet','AT2','Clara'))  
+
+#featureplot
+p <- FeaturePlot(sce.all.int, reduction = "umap", features = genes_to_check, ncol = 6)
+#ggsave("seurat_markers_featureplot.png", p, width = 12, height = 18)
+
+ggsave("metacell_markers_featureplot.png", p, width = 12, height = 18)
+
+p <- VlnPlot(sce.all.int, features = c("Epcam","Ccdc162","Ckap2l","Mgp","Adgrf5","Gng11",
+                                       "Emp2","Il7r","Gzmb","Ctla4","Nkg7","Cd79a","Ebf1","Ly6d",
+                                       "S100a9","S100a8","Retnlg","Ms4a6c","S100a4"), 
+             group.by = "celltype", stack = T, flip = T)
+ggsave("output/all_markers_vlnplot.pdf", p, width = 10, height = 12)
+
+
+###
+celltype=data.frame(ClusterID=0:40,
+                    celltype='un')
+#Epithelial cells
+celltype[celltype$ClusterID %in% c('31'),2]='Clara' 
+celltype[celltype$ClusterID %in% c('23'),2]='Goblet'  
+celltype[celltype$ClusterID %in% c("22"),2]='AT1'  
+celltype[celltype$ClusterID %in% c('24'),2]='AT2'  
+
+#Stromal cells
+celltype[celltype$ClusterID %in% c('6',"11","17","25","32","40"),2]='Endothelial'
+celltype[celltype$ClusterID %in% c( '17'),2]='Capillary'  
+celltype[celltype$ClusterID %in% c( '0',"13","33"),2]='Fibro_C1'  
+celltype[celltype$ClusterID %in% c( "28"),2]='Myofibro'
+celltype[celltype$ClusterID %in% c( '34'),2]='Lipofibro'  
+celltype[celltype$ClusterID %in% c( "26"),2]='Pericytes'
+celltype[celltype$ClusterID %in% c( '10'),2]='Fibro_C2'  
+#myeloid cells
+celltype[celltype$ClusterID %in% c("2"),2]='TRAM_C1'
+celltype[celltype$ClusterID %in% c("14"),2]='TRAM_C2'
+celltype[celltype$ClusterID %in% c('8'),2]='MoAM'
+celltype[celltype$ClusterID %in% c( '18',"20"),2]='AMs'  
+celltype[celltype$ClusterID %in% c( "38"),2]='cDC'
+celltype[celltype$ClusterID %in% c( '35'),2]='pDC' 
+celltype[celltype$ClusterID %in% c( "36"),2]='Prol_AM'
+
+#B cells
+celltype[celltype$ClusterID %in% c( "3","40"),2]='Memo_B'
+celltype[celltype$ClusterID %in% c( '1'),2]='Mature_B'  
+celltype[celltype$ClusterID %in% c( '21'),2]='Plasma'  
+#T cells
+celltype[celltype$ClusterID %in% c( "5"),2]='Acti_CD8T'
+celltype[celltype$ClusterID %in% c( "7"),2]='Naive_CD8T'
+celltype[celltype$ClusterID %in% c( '9'),2]='Naive_CD4T'  
+celltype[celltype$ClusterID %in% c( "12"),2]='Tregs'
+celltype[celltype$ClusterID %in% c( '16'),2]='Prol_CD8T'  
+celltype[celltype$ClusterID %in% c( "19"),2]='Th17'
+celltype[celltype$ClusterID %in% c( '29'),2]='Th2'
+celltype[celltype$ClusterID %in% c( '4'),2]='NK'  
+
+#Neutrophils
+celltype[celltype$ClusterID %in% c( "15",'27',"30","37","39"),2]='Neutrophil'
+
+head(celltype)
+celltype 
+table(celltype$celltype)
+sce.all.int@meta.data$celltype = "NA"
+table(sce.all.int@meta.data$seurat_clusters)
+for(i in 1:nrow(celltype)){
+  sce.all.int@meta.data[which(sce.all.int@meta.data$seurat_clusters == celltype$ClusterID[i]),'celltype'] <- celltype$celltype[i]}
+table(sce.all.int@meta.data$celltype)
+DimPlot(sce.all.int, reduction = "tsne", group.by = "celltype", label = T, label.box = T)
+DimPlot(sce.all.int, reduction = "umap", group.by = "celltype", label = T, label.box = T)
+
+sce.all.int@meta.data$orig.ident
+p <- DimPlot(sce.all.int,reduction = "umap", group.by = "celltype",cols= mycolors,pt.size = 0.3,label = T,repel = T)+  
+  NoLegend()+labs(x = "UMAP1", y = "UMAP2") +   
+  theme(axis.text.y = element_blank(),   
+        axis.ticks.y = element_blank(),   
+        axis.text.x = element_blank(),   
+        axis.ticks.x = element_blank())+  
+  theme(panel.border = element_rect(fill=NA,color="black", size=1, linetype="solid"))  
+p
+ggsave("output/all_umap_30c_label.pdf", p, width = 8, height = 6)
+
+library(gplots)
+seurat <- sce.all.int
+phe=sce.all.int@meta.data
+
+tab.1=table(phe$seurat_clusters, phe$celltype)
+tab.1 
+pro='cluster'
+pdf(file = paste0(pro,'last_celltype_vs_seurat_clusters.pdf'),width = 12)
+balloonplot(tab.1, main ="last_celltype VS seurat_clusters ", xlab ="", ylab="",
+            label = T, show.margins = F)
+dev.off()
+
+head(phe)
+tb=as.data.frame(table(phe$celltype),stringsAsFactors = F)
+tb=tb[order(tb$Freq,decreasing=F),]
+tb
+write.csv(tb,file="all-celltype-fractions.csv")
+colnames(tb) <- c('Celltype', 'Freq')
+percentage <- scales::percent(tb$Freq / sum(tb$Freq))
+percentage
+labs <- paste0(tb$Celltype,'(', percentage, ')')
+labs
+tb$cell=factor(tb$Celltype,levels=tb$Celltype)
+#mycolors<-c("#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5", "#D9D9D9",
+"#BC80BD", "#CCEBC5")
+mycolors <- pal_igv("default")(51)
+
+p.pie= ggplot(tb, aes(x = "", y = Freq, fill = cell)) + 
+  geom_bar(stat = "identity",width = 1) + 
+  scale_fill_manual(breaks = tb$cell, labels = labs,values=mycolors) +
+  labs(x = "", y = "", title = "") +
+  coord_polar(theta = "y")  +
+  theme(axis.ticks = element_blank()) 
+p.pie
+ggsave(plot=p.pie,filename="output/total_pie-all.pdf",width=8, height=6)
+
+head(tb)
+tb$percentage <-tb$Freq / sum(tb$Freq)
+tb$Celltype = factor(tb$Celltype,tb$Celltype)
+tb$Celltype
+tb
+write.csv(tb,file = "output/allcellproportions.csv")
+
+p_barplot <- ggplot(tb, mapping=aes(x=Celltype, y=percentage, fill=Celltype)) +
+  geom_bar(stat="identity") +theme_bw()  +
+  scale_fill_manual(values=single_col) +
+  theme(legend.position ="none") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 0.5, vjust = 0.5,size=10,))+
+  theme(panel.grid = element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'),
+        legend.title = element_blank())
+#geom_text( aes(x=Celltype, y=percentage, label = labs), check_overlap = T,
+#size=2, vjust = -1)
+p_barplot 
+ggsave(plot=p_barplot,filename="output/Total_barplot-30.pdf",width=12, height=5)
+p2 <- p_barplot + coord_polar()+labs(x = "", y = "", title = "Cell Types") + 
+  theme(axis.text.y = element_blank()) +     
+  theme(axis.ticks = element_blank()) +     
+  theme(panel.border = element_blank()) + 
+  theme(plot.title = element_text(hjust=0.5,size=14,face = "bold") )+
+  theme(axis.text.x=  element_blank() )
+p2
+ggsave(plot=p2,filename="output/Total_pie2.pdf",width=6, height=7)
+
+library(patchwork)
+p.pie+p_barplot
+colnames(phe)
+table(phe$orig.ident)
+test=phe[,c("orig.ident" ,"celltype")] 
+test$cell=factor(test$celltype,levels=rev(tb$Celltype))
+head(test)
+
+table(test$orig.ident)
+test$orig.ident <- factor(test$orig.ident, levels=c("Control","ICI_d7","ICI_d30","IR_d7",
+                                                    "IR_d30","iRT_d7","iRT_d30"), ordered=TRUE)
+p.bar.sample=ggplot(test, aes(x=orig.ident, fill=cell)) +
+  geom_bar(position="fill") + 
+  scale_fill_manual(values=mycolors) +
+  theme(axis.text.x = element_text(angle=45, hjust=1, vjust=1))+
+  labs(title='Cell proportion of each sample')   
+p.bar.sample
+ggsave(plot=p.bar.sample,filename="output/Bar.sample.pdf",
+       width=10, height=6)
+
+colnames(phe)
+table(phe$orig.ident)
+test=phe[,c("orig.ident" ,"time", "therapy","Phase","celltype")] 
+test$cell=factor(test$celltype,levels=rev(tb$Celltype))
+head(test)
+p.bar.sample=ggplot(test, aes(x=orig.ident, fill=cell)) +
+  geom_bar(position="fill") + scale_fill_manual(values=mycolors) +
+  labs(title='Cell proportion of each sample') +theme_bw()  
+p.bar.sample
+ggsave(plot=p.bar.sample,filename="output/Suppli/Fig-S2/Bar.sample.pdf",
+       width=5, height=5)
+p.bar.group1=ggplot(test, aes(x=therapy, fill=cell)) +
+  geom_bar(position="fill") + scale_fill_manual(values=mycolors) +
+  labs(title='Cell proportion of each therapy')
+p.bar.group1
+ggsave(plot=p.bar.group1,filename="output/Suppli/Fig-S2/Bar.group-therapy.pdf",width=3, height=5)
+p.bar.group2=ggplot(test, aes(x=time, fill=cell)) +
+  geom_bar(position="fill") + scale_fill_manual(values=mycolors) +
+  labs(title='Cell proportion of each timepoint')
+p.bar.group2
+ggsave(plot=p.bar.group2,filename="output/Suppli/Fig-S2/Bar.group-timepoint.pdf",width=3, height=5) 
+p.bar.group=ggplot(test, aes(x=Phase, fill=cell)) +
+  geom_bar(position="fill") + scale_fill_manual(values=mycolors) +
+  labs(title='Cell proportion of each Phase')
+p.bar.group
+ggsave(plot=p.bar.group,filename="output/Suppli/Fig-S2/Bar.group-phase.pdf",width=3, height=5)
+library(patchwork)
+p.patch <- p.bar.sample+p.bar.group1+p.bar.group2
+p.patch
+ggsave(plot=p.patch,filename="output/Suppli/Fig-S2/Bar.group-patch.pdf",width=16, height=6)
+
+mat <- GetAssayData(sce.all.int, slot = "counts")
+mat <- log2(mat+1)
+gene_features <- top5
+av <-AverageExpression(sce.all.int,
+                       group.by = "celltype",
+                       assays = "RNA") 
+av=av[[1]]
+head(av)
+cg=names(tail(sort(apply(av, 1, sd)),1000))
+pheatmap::pheatmap(cor(av[cg,]),color = col(100))
+#corrplot
+corrplot(cor(av[cg,]))
+
+###  
